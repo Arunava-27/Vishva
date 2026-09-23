@@ -9,10 +9,11 @@
  */
 import { execFile as execFileCb, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
+import type { McpServerConfig } from './mcpServers.ts'
 // child_process.spawn cannot execute .cmd/.bat files on Windows at all with
 // shell:false - not even given the fully resolved path (confirmed: EINVAL).
 // cross-spawn is the standard, widely-used fix (npm itself depends on it)
@@ -158,6 +159,68 @@ export interface Provider {
    * run() appends [outputFileFlag, <temp path>] to the args, reads that file
    * as the reply after the process exits, and deletes it. */
   outputFileFlag?: string
+  /** claude/copilot: a flag that takes a path to a JSON file listing MCP
+   * servers, safe to point at a temp file we own (no risk of touching the
+   * user's own real config). */
+  mcpConfigFlag?: string
+  /** codex: no file-based flag exists - MCP servers are passed as repeatable
+   * dotted `-c mcp_servers.<name>.*=...` config overrides directly on the
+   * invocation instead, so it needs its own arg-builder. */
+  mcpServerArgsFn?: (servers: McpServerConfig[]) => string[]
+}
+
+/** Builds whatever extra CLI args a provider needs to see the given MCP
+ * servers this turn, plus a cleanup function for any temp file created.
+ * Antigravity has neither mcpConfigFlag nor mcpServerArgsFn - its only real
+ * mechanism (`agy mcp add`) persistently mutates the user's shared global
+ * config with no scoped override, so MCP is a silent no-op for it for now. */
+export function buildMcpInvocationArgs(
+  provider: Provider,
+  servers: McpServerConfig[],
+): { args: string[]; cleanup: () => void } {
+  const noop = { args: [], cleanup: () => {} }
+  if (servers.length === 0) return noop
+
+  if (provider.mcpServerArgsFn) {
+    return { args: provider.mcpServerArgsFn(servers), cleanup: () => {} }
+  }
+
+  if (provider.mcpConfigFlag) {
+    const tmp = path.join(os.tmpdir(), `aicli-mcp-${randomUUID()}.json`)
+    const mcpServers: Record<string, unknown> = {}
+    for (const s of servers) {
+      mcpServers[s.name] =
+        s.transport === 'http' ? { type: 'http', url: s.url } : { command: s.command, args: s.args, env: s.env }
+    }
+    writeFileSync(tmp, JSON.stringify({ mcpServers }))
+    return {
+      args: [provider.mcpConfigFlag, tmp],
+      cleanup: () => {
+        try {
+          unlinkSync(tmp)
+        } catch {
+          // already gone
+        }
+      },
+    }
+  }
+
+  return noop
+}
+
+/** codex has no config-file override flag - only repeatable `-c` dotted
+ * overrides applied directly to the `codex exec` invocation. Stdio only:
+ * codex's http-transport TOML key wasn't confirmed live, so http servers are
+ * skipped here rather than guessed at. */
+export function codexMcpArgs(servers: McpServerConfig[]): string[] {
+  const args: string[] = []
+  for (const s of servers) {
+    if (s.transport === 'http') continue
+    args.push('-c', `mcp_servers.${s.name}.command=${JSON.stringify(s.command)}`)
+    if (s.args.length) args.push('-c', `mcp_servers.${s.name}.args=${JSON.stringify(s.args)}`)
+    for (const [k, v] of Object.entries(s.env)) args.push('-c', `mcp_servers.${s.name}.env.${k}=${JSON.stringify(v)}`)
+  }
+  return args
 }
 
 /** Runs a provider's statusCommand and reads its `loggedIn` field. Returns
@@ -181,6 +244,7 @@ export interface RunOptions {
   useResume?: boolean
   timeoutMs?: number
   attachments?: string[]
+  mcpServers?: McpServerConfig[]
   onProcess?: (proc: ChildProcessWithoutNullStreams) => void
 }
 
@@ -210,6 +274,9 @@ export async function runProvider(
 
   const outputFile = provider.outputFileFlag ? path.join(os.tmpdir(), `aicli-output-${randomUUID()}.txt`) : null
   if (outputFile) args.push(provider.outputFileFlag!, outputFile)
+
+  const mcp = buildMcpInvocationArgs(provider, opts.mcpServers ?? [])
+  args.push(...mcp.args)
 
   return new Promise((resolve) => {
     let proc: ChildProcessWithoutNullStreams
@@ -246,6 +313,7 @@ export async function runProvider(
           }
         }
       }
+      mcp.cleanup()
       resolve({ status, output, sessionId, rawStderr: stderr })
     }
 
@@ -280,6 +348,8 @@ export const PROVIDERS: Record<string, Provider> = {
     installCommand: { cmd: 'npm', args: ['install', '-g', '@anthropic-ai/claude-code'] },
     loginCommand: { cmd: 'claude', args: ['auth', 'login'] },
     statusCommand: { cmd: 'claude', args: ['auth', 'status'] },
+    // confirmed live via `claude --help`: repeatable, points at any JSON file - safe to use a temp file we own.
+    mcpConfigFlag: '--mcp-config',
   },
   codex: {
     name: 'codex',
@@ -309,6 +379,8 @@ export const PROVIDERS: Record<string, Provider> = {
     verified: true,
     installCommand: { cmd: 'npm', args: ['install', '-g', '@openai/codex'] },
     loginCommand: { cmd: 'codex', args: ['login'] },
+    // confirmed live via `codex --help`: no file-flag, only repeatable `-c mcp_servers.<name>.*=` overrides.
+    mcpServerArgsFn: codexMcpArgs,
   },
   copilot: {
     name: 'copilot',
@@ -323,6 +395,8 @@ export const PROVIDERS: Record<string, Provider> = {
     verified: true,
     installCommand: { cmd: 'npm', args: ['install', '-g', '@github/copilot'] },
     loginCommand: { cmd: 'copilot', args: ['login'] },
+    // confirmed live via `copilot --help`: session-only, augments (doesn't persist into) ~/.copilot/mcp-config.json.
+    mcpConfigFlag: '--additional-mcp-config',
   },
   antigravity: {
     name: 'antigravity',

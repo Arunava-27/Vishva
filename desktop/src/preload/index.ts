@@ -6,6 +6,7 @@ interface ChatEvent {
   message: string
   detail?: string
   timestamp: string
+  taskId: string
 }
 
 const api = {
@@ -21,6 +22,8 @@ const api = {
   attachDialog: () => ipcRenderer.invoke('dialog:attach'),
   pickDirectory: () => ipcRenderer.invoke('dialog:pickDirectory'),
   sendMessage: (args: {
+    taskId: string
+    sessionId: string
     sessionData: unknown | null
     task: string
     cwd: string
@@ -30,7 +33,7 @@ const api = {
     text: string
     attachments: string[]
   }) => ipcRenderer.invoke('chat:send', args),
-  cancel: () => ipcRenderer.invoke('chat:cancel'),
+  cancel: (taskId: string) => ipcRenderer.invoke('chat:cancel', taskId),
   onChatEvent: (callback: (event: ChatEvent) => void) => {
     const listener = (_event: unknown, chatEvent: ChatEvent) => callback(chatEvent)
     ipcRenderer.on('chat:event', listener)
@@ -56,6 +59,15 @@ const api = {
   getAttachmentThumbnail: (path: string) => ipcRenderer.invoke('attachments:thumbnail', path),
   saveClipboardImage: (data: ArrayBuffer, ext: string) => ipcRenderer.invoke('attachments:saveClipboardImage', data, ext),
   deleteTempAttachment: (path: string) => ipcRenderer.invoke('attachments:deleteTemp', path),
+  listSkills: () => ipcRenderer.invoke('skills:list'),
+  createSkill: (name: string, description: string, body: string, scope: 'global' | 'project', projectId: string | null) =>
+    ipcRenderer.invoke('skills:create', name, description, body, scope, projectId),
+  updateSkill: (id: string, patch: Record<string, unknown>) => ipcRenderer.invoke('skills:update', id, patch),
+  deleteSkill: (id: string) => ipcRenderer.invoke('skills:delete', id),
+  listMcpServers: () => ipcRenderer.invoke('mcp:list'),
+  addMcpServer: (input: Record<string, unknown>) => ipcRenderer.invoke('mcp:add', input),
+  updateMcpServer: (id: string, patch: Record<string, unknown>) => ipcRenderer.invoke('mcp:update', id, patch),
+  removeMcpServer: (id: string) => ipcRenderer.invoke('mcp:remove', id),
 }
 
 export type AicliApi = typeof api

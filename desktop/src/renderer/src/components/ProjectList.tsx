@@ -5,6 +5,7 @@ interface Props {
   projects: ProjectData[]
   sessions: SessionData[]
   activeSessionId: string | null
+  busySessionIds: Set<string>
   onNewProject: () => void
   onEditProject: (project: ProjectData) => void
   onDeleteProject: (id: string) => void
@@ -18,6 +19,7 @@ export default function ProjectList({
   projects,
   sessions,
   activeSessionId,
+  busySessionIds,
   onNewProject,
   onEditProject,
   onDeleteProject,
@@ -91,6 +93,7 @@ export default function ProjectList({
                   key={s.id}
                   session={s}
                   isActive={s.id === activeSessionId}
+                  isBusy={busySessionIds.has(s.id)}
                   onOpen={onOpenSession}
                   onRename={onRenameSession}
                   onDelete={onDeleteSession}

@@ -1,8 +1,10 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { classifyFailure, buildArgs, displayOutput, runProvider, type Provider } from './providers.ts'
+import { buildMcpInvocationArgs, classifyFailure, buildArgs, codexMcpArgs, displayOutput, runProvider, type Provider } from './providers.ts'
+import type { McpServerConfig } from './mcpServers.ts'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -98,4 +100,62 @@ test('runProvider: outputFileFlag falls back to stdout if the file was never wri
   const result = await runProvider(provider, 'hello', 'sid-1')
   assert.equal(result.status, 'UNKNOWN_ERROR')
   assert.equal(result.output, 'partial output')
+})
+
+function mcpServer(overrides: Partial<McpServerConfig> = {}): McpServerConfig {
+  return {
+    id: 'x',
+    name: 'fs',
+    scope: 'global',
+    projectId: null,
+    transport: 'stdio',
+    command: 'npx',
+    args: ['-y', 'server'],
+    env: {},
+    url: '',
+    ...overrides,
+  }
+}
+
+test('buildMcpInvocationArgs: no servers is a no-op', () => {
+  const { args, cleanup } = buildMcpInvocationArgs({ mcpConfigFlag: '--mcp-config' } as Provider, [])
+  assert.deepEqual(args, [])
+  cleanup() // should not throw with nothing to clean up
+})
+
+test('buildMcpInvocationArgs: file-based flag writes a temp JSON config and cleans it up', () => {
+  const { args, cleanup } = buildMcpInvocationArgs({ mcpConfigFlag: '--mcp-config' } as Provider, [
+    mcpServer({ name: 'fs' }),
+    mcpServer({ name: 'remote', transport: 'http', url: 'https://example.com/mcp' }),
+  ])
+  assert.equal(args[0], '--mcp-config')
+  const tmpPath = args[1]
+  const written = JSON.parse(fs.readFileSync(tmpPath, 'utf-8'))
+  assert.deepEqual(written.mcpServers.fs, { command: 'npx', args: ['-y', 'server'], env: {} })
+  assert.deepEqual(written.mcpServers.remote, { type: 'http', url: 'https://example.com/mcp' })
+  cleanup()
+  assert.equal(fs.existsSync(tmpPath), false)
+})
+
+test('codexMcpArgs: builds repeatable dotted -c overrides, skips http servers', () => {
+  const args = codexMcpArgs([
+    mcpServer({ name: 'fs', command: 'npx', args: ['-y', 'server'], env: { KEY: 'v' } }),
+    mcpServer({ name: 'remote', transport: 'http' }),
+  ])
+  assert.deepEqual(args, [
+    '-c', 'mcp_servers.fs.command="npx"',
+    '-c', 'mcp_servers.fs.args=["-y","server"]',
+    '-c', 'mcp_servers.fs.env.KEY="v"',
+  ])
+})
+
+test('buildMcpInvocationArgs: codex-style arg-builder is used instead of a file', () => {
+  const provider = { mcpServerArgsFn: codexMcpArgs } as Provider
+  const { args } = buildMcpInvocationArgs(provider, [mcpServer({ name: 'fs' })])
+  assert.deepEqual(args, ['-c', 'mcp_servers.fs.command="npx"', '-c', 'mcp_servers.fs.args=["-y","server"]'])
+})
+
+test('buildMcpInvocationArgs: a provider with neither mechanism (antigravity) is a no-op', () => {
+  const { args } = buildMcpInvocationArgs({} as Provider, [mcpServer()])
+  assert.deepEqual(args, [])
 })

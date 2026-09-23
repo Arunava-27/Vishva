@@ -5,6 +5,7 @@ import SessionRow from './SessionRow'
 interface Props {
   sessions: SessionData[]
   activeSessionId: string | null
+  busySessionIds: Set<string>
   onOpenSession: (id: string) => void
   onRename: (id: string, task: string) => void
   onDelete: (id: string) => void
@@ -27,7 +28,7 @@ function bucketFor(ts: number): Group {
   return 'Older'
 }
 
-export default function SessionList({ sessions, activeSessionId, onOpenSession, onRename, onDelete }: Props) {
+export default function SessionList({ sessions, activeSessionId, busySessionIds, onOpenSession, onRename, onDelete }: Props) {
   const [search, setSearch] = useState('')
 
   const filtered = search.trim()
@@ -61,6 +62,7 @@ export default function SessionList({ sessions, activeSessionId, onOpenSession, 
               key={s.id}
               session={s}
               isActive={s.id === activeSessionId}
+              isBusy={busySessionIds.has(s.id)}
               onOpen={onOpenSession}
               onRename={onRename}
               onDelete={onDelete}

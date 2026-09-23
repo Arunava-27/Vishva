@@ -7,25 +7,39 @@ import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } f
 import { getKnownAuthState, setKnownAuthState } from './authState.ts'
 import { sendMessage } from './chat.ts'
 import { clearCooldown, getCooldownInfo } from './cooldown.ts'
+import { activeMcpServers, addMcpServer, listMcpServers, removeMcpServer, updateMcpServer, type McpServerConfig } from './mcpServers.ts'
 import { checkLiveAuthStatus, isInstalled, PROVIDERS, runProvider, type Provider } from './providers.ts'
 import { Project, type ProjectData } from './project.ts'
 import { Session, type SessionData } from './session.ts'
 import { getSettings, setSettings, type Settings } from './settings.ts'
 import { runStreamingCommand } from './setup.ts'
+import { Skill, type SkillData } from './skill.ts'
+import { syncAllSkills, syncSkill, unsyncSkill } from './skillSync.ts'
 
 let mainWindow: BrowserWindow | null = null
 
-// Only one send in flight at a time (single-window MVP) - tracked here so the
-// close handler and the cancel IPC can both reach it.
-let currentProc: import('node:child_process').ChildProcessWithoutNullStreams | null = null
-let cancelRequested = false
-let sendInFlight = false
+type ChildProc = import('node:child_process').ChildProcessWithoutNullStreams
 
-// Same idea, for an install/login action running in the background.
-let currentSetupProc: import('node:child_process').ChildProcessWithoutNullStreams | null = null
-let setupInFlight = false
+interface RunningTask {
+  kind: 'send' | 'setup'
+  sessionId: string | null // null for install/login tasks
+  proc: ChildProc | null
+  cancelled: boolean
+  startedAt: number
+}
 
-function killTree(proc: import('node:child_process').ChildProcessWithoutNullStreams | null): void {
+// Keyed by taskId (client-generated in the renderer) so multiple chats can
+// send concurrently - the close handler and per-task cancel both look tasks
+// up here instead of a single global flag. Setup tasks share this map purely
+// so the close handler has one thing to check; SetupPanel itself stays
+// single-instance, no real setup-concurrency is being introduced.
+const runningTasks = new Map<string, RunningTask>()
+
+// Only one install/login can be visible at a time (SetupPanel is a single
+// instance), so cancelling "the current one" just needs this one pointer.
+let currentSetupTaskId: string | null = null
+
+function killTree(proc: ChildProc | null): void {
   if (!proc || proc.pid == null || proc.exitCode !== null) return
   if (process.platform === 'win32') {
     execFile('taskkill', ['/F', '/T', '/PID', String(proc.pid)], () => {})
@@ -52,9 +66,9 @@ function createWindow(): void {
   // process tree (not just the top-level one) via taskkill /T on Windows -
   // matches the guarantee already proven out in the Python prototype.
   mainWindow.on('close', (event) => {
-    if (!sendInFlight && !setupInFlight) return
+    if (runningTasks.size === 0) return
     event.preventDefault()
-    const what = sendInFlight ? 'A provider is still running' : 'An install/login is still running'
+    const what = runningTasks.size === 1 ? 'A task is still running' : `${runningTasks.size} tasks are still running`
     const choice = dialog.showMessageBoxSync(mainWindow!, {
       type: 'question',
       buttons: ['Cancel', 'Stop and close'],
@@ -66,11 +80,11 @@ function createWindow(): void {
         'rather than leave it running in the background. Continue?',
     })
     if (choice === 1) {
-      cancelRequested = true
-      killTree(currentProc)
-      killTree(currentSetupProc)
-      sendInFlight = false
-      setupInFlight = false
+      for (const task of runningTasks.values()) {
+        task.cancelled = true
+        killTree(task.proc)
+      }
+      runningTasks.clear()
       mainWindow?.destroy()
     }
   })
@@ -91,7 +105,21 @@ function createWindow(): void {
   }
 }
 
-app.whenReady().then(createWindow)
+function projectCwd(projectId: string): string | null {
+  try {
+    return Project.load(projectId).data.cwd
+  } catch {
+    return null
+  }
+}
+
+app.whenReady().then(() => {
+  createWindow()
+  syncAllSkills(
+    () => Skill.listAll().map((s) => s.data),
+    projectCwd,
+  )
+})
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
@@ -148,32 +176,36 @@ ipcMain.handle('providers:list', async (): Promise<ProviderStatus[]> => {
 ipcMain.handle('provider:install', async (event: IpcMainInvokeEvent, name: string) => {
   const provider = PROVIDERS[name]
   if (!provider?.installCommand) return { code: null }
-  setupInFlight = true
-  currentSetupProc = null
+  const taskId = randomUUID()
+  currentSetupTaskId = taskId
+  const task: RunningTask = { kind: 'setup', sessionId: null, proc: null, cancelled: false, startedAt: Date.now() }
+  runningTasks.set(taskId, task)
   const result = await runStreamingCommand(provider.installCommand, {
     onOutput: (chunk) => event.sender.send('provider:setup-event', chunk),
     onProcess: (proc) => {
-      currentSetupProc = proc
+      task.proc = proc
     },
   })
-  setupInFlight = false
-  currentSetupProc = null
+  runningTasks.delete(taskId)
+  if (currentSetupTaskId === taskId) currentSetupTaskId = null
   return result
 })
 
 ipcMain.handle('provider:login', async (event: IpcMainInvokeEvent, name: string) => {
   const provider = PROVIDERS[name]
   if (!provider?.loginCommand) return { code: null }
-  setupInFlight = true
-  currentSetupProc = null
+  const taskId = randomUUID()
+  currentSetupTaskId = taskId
+  const task: RunningTask = { kind: 'setup', sessionId: null, proc: null, cancelled: false, startedAt: Date.now() }
+  runningTasks.set(taskId, task)
   const result = await runStreamingCommand(provider.loginCommand, {
     onOutput: (chunk) => event.sender.send('provider:setup-event', chunk),
     onProcess: (proc) => {
-      currentSetupProc = proc
+      task.proc = proc
     },
   })
-  setupInFlight = false
-  currentSetupProc = null
+  runningTasks.delete(taskId)
+  if (currentSetupTaskId === taskId) currentSetupTaskId = null
   // exit 0 is our best signal short of a real status command (copilot has
   // none) - a cancelled/failed run leaves the prior known state alone rather
   // than assuming it means logged out.
@@ -185,7 +217,7 @@ ipcMain.handle('provider:login', async (event: IpcMainInvokeEvent, name: string)
 })
 
 ipcMain.handle('provider:cancelSetup', () => {
-  killTree(currentSetupProc)
+  if (currentSetupTaskId) killTree(runningTasks.get(currentSetupTaskId)?.proc ?? null)
 })
 
 ipcMain.handle('provider:openInstallUrl', (_e: IpcMainInvokeEvent, name: string) => {
@@ -246,12 +278,84 @@ ipcMain.handle(
 
 ipcMain.handle(
   'projects:update',
-  (_e: IpcMainInvokeEvent, id: string, patch: Partial<Pick<ProjectData, 'name' | 'instructions' | 'cwd'>>): ProjectData =>
-    Project.update(id, patch),
+  (_e: IpcMainInvokeEvent, id: string, patch: Partial<Pick<ProjectData, 'name' | 'instructions' | 'cwd'>>): ProjectData => {
+    const oldCwd = projectCwd(id)
+    const updated = Project.update(id, patch)
+    if (patch.cwd !== undefined) {
+      for (const skill of Skill.listAll()) {
+        if (skill.data.scope === 'project' && skill.data.projectId === id) {
+          unsyncSkill(skill.data, oldCwd)
+          syncSkill(skill.data, updated.cwd)
+        }
+      }
+    }
+    return updated
+  },
 )
 
 ipcMain.handle('projects:delete', (_e: IpcMainInvokeEvent, id: string): void => {
+  const oldCwd = projectCwd(id)
+  for (const skill of Skill.listAll()) {
+    if (skill.data.scope === 'project' && skill.data.projectId === id) unsyncSkill(skill.data, oldCwd)
+  }
   Project.delete(id)
+})
+
+ipcMain.handle('skills:list', (): SkillData[] => Skill.listAll().map((s) => s.data))
+
+ipcMain.handle(
+  'skills:create',
+  (
+    _e: IpcMainInvokeEvent,
+    name: string,
+    description: string,
+    body: string,
+    scope: 'global' | 'project',
+    projectId: string | null,
+  ): SkillData => {
+    const s = Skill.create(name, description, body, scope, projectId)
+    s.save()
+    syncSkill(s.data, scope === 'project' && projectId ? projectCwd(projectId) : null)
+    return s.data
+  },
+)
+
+ipcMain.handle(
+  'skills:update',
+  (
+    _e: IpcMainInvokeEvent,
+    id: string,
+    patch: Partial<Pick<SkillData, 'name' | 'description' | 'body' | 'scope' | 'projectId'>>,
+  ): SkillData => {
+    const before = Skill.load(id).data
+    const oldCwd = before.scope === 'project' && before.projectId ? projectCwd(before.projectId) : null
+    const updated = Skill.update(id, patch)
+    unsyncSkill(before, oldCwd)
+    const newCwd = updated.scope === 'project' && updated.projectId ? projectCwd(updated.projectId) : null
+    syncSkill(updated, newCwd)
+    return updated
+  },
+)
+
+ipcMain.handle('skills:delete', (_e: IpcMainInvokeEvent, id: string): void => {
+  const s = Skill.load(id).data
+  const cwd = s.scope === 'project' && s.projectId ? projectCwd(s.projectId) : null
+  unsyncSkill(s, cwd)
+  Skill.delete(id)
+})
+
+ipcMain.handle('mcp:list', (): McpServerConfig[] => listMcpServers())
+
+ipcMain.handle('mcp:add', (_e: IpcMainInvokeEvent, input: Omit<McpServerConfig, 'id'>): McpServerConfig => addMcpServer(input))
+
+ipcMain.handle(
+  'mcp:update',
+  (_e: IpcMainInvokeEvent, id: string, patch: Partial<Omit<McpServerConfig, 'id'>>): McpServerConfig =>
+    updateMcpServer(id, patch),
+)
+
+ipcMain.handle('mcp:remove', (_e: IpcMainInvokeEvent, id: string): void => {
+  removeMcpServer(id)
 })
 
 ipcMain.handle('dialog:pickDirectory', async (): Promise<string | null> => {
@@ -300,6 +404,8 @@ ipcMain.handle(
   async (
     event: IpcMainInvokeEvent,
     args: {
+      taskId: string
+      sessionId: string
       sessionData: SessionData | null
       task: string
       cwd: string
@@ -312,10 +418,9 @@ ipcMain.handle(
   ): Promise<{ session: SessionData; answeredBy: string }> => {
     const session = args.sessionData
       ? new Session(args.sessionData)
-      : Session.create(args.task, args.cwd, args.projectId)
-    sendInFlight = true
-    cancelRequested = false
-    currentProc = null
+      : Session.create(args.task, args.cwd, args.projectId, args.sessionId)
+    const runningTask: RunningTask = { kind: 'send', sessionId: session.data.id, proc: null, cancelled: false, startedAt: Date.now() }
+    runningTasks.set(args.taskId, runningTask)
 
     // best-effort: a project deleted out from under an existing session just
     // means no instructions get prepended (only matters on the first message
@@ -331,16 +436,16 @@ ipcMain.handle(
 
     const answeredBy = await sendMessage(session, args.activeProvider, args.fallbackOrder, args.text, {
       attachments: args.attachments,
-      onEvent: (chatEvent) => event.sender.send('chat:event', chatEvent),
+      onEvent: (chatEvent) => event.sender.send('chat:event', { ...chatEvent, taskId: args.taskId }),
       onProcess: (proc) => {
-        currentProc = proc
+        runningTask.proc = proc
       },
-      isCancelled: () => cancelRequested,
+      isCancelled: () => runningTask.cancelled,
       projectInstructions,
+      mcpServers: activeMcpServers(session.data.projectId),
     })
 
-    sendInFlight = false
-    currentProc = null
+    runningTasks.delete(args.taskId)
 
     // opportunistic ground truth for providers with no status command: a
     // real chat outcome is stronger evidence than "the login command exited
@@ -354,7 +459,9 @@ ipcMain.handle(
   },
 )
 
-ipcMain.handle('chat:cancel', () => {
-  cancelRequested = true
-  killTree(currentProc)
+ipcMain.handle('chat:cancel', (_e: IpcMainInvokeEvent, taskId: string) => {
+  const task = runningTasks.get(taskId)
+  if (!task) return
+  task.cancelled = true
+  killTree(task.proc)
 })

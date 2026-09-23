@@ -12,6 +12,7 @@
  */
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { clearCooldown, getCooldownInfo, INDEFINITE_COOLDOWN, isOnCooldown, recordFailure } from './cooldown.ts'
+import type { McpServerConfig } from './mcpServers.ts'
 import { displayOutput, PROVIDERS, runProvider } from './providers.ts'
 import type { Session } from './session.ts'
 
@@ -41,6 +42,7 @@ export interface SendMessageOptions {
    * provider switch, via handoffPrompt's transcript reconstruction) inherits
    * it from that first message rather than needing to be re-injected. */
   projectInstructions?: string
+  mcpServers?: McpServerConfig[]
 }
 
 export async function sendMessage(
@@ -108,6 +110,7 @@ export async function sendMessage(
     const result = await runProvider(provider, prompt, session.data.id, {
       useResume: canResumeNatively,
       attachments: opts.attachments,
+      mcpServers: opts.mcpServers,
       onProcess: opts.onProcess,
     })
     session.record(name, result.status, result.sessionId)

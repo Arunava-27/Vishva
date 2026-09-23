@@ -65,11 +65,14 @@ export class Session {
     this.data = data
   }
 
-  static create(task: string, cwd: string, projectId: string | null = null): Session {
+  static create(task: string, cwd: string, projectId: string | null = null, id: string = randomUUID()): Session {
     // a real UUID, not a truncated one - providers like claude/copilot require
     // --session-id to be a valid UUID, and reusing this same id as *their*
     // native session id is what makes same-provider chat continuation free.
-    return new Session({ id: randomUUID(), task, cwd, projectId, history: [], messages: [], status: 'active' })
+    // The renderer generates this id client-side (see the concurrency model
+    // in index.ts) so a brand-new chat can be tracked as soon as it's sent,
+    // rather than only after the IPC round-trip resolves.
+    return new Session({ id, task, cwd, projectId, history: [], messages: [], status: 'active' })
   }
 
   static filePath(id: string): string {

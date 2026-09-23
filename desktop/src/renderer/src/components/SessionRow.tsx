@@ -4,6 +4,7 @@ import type { SessionData } from '../types'
 interface Props {
   session: SessionData
   isActive: boolean
+  isBusy: boolean
   onOpen: (id: string) => void
   onRename: (id: string, task: string) => void
   onDelete: (id: string) => void
@@ -21,7 +22,7 @@ function relativeTime(ts: number): string {
 
 // Shared by the top-level chat list and each project's chat list - rename/
 // delete behavior is identical either way, only where the sessions come from differs.
-export default function SessionRow({ session, isActive, onOpen, onRename, onDelete }: Props) {
+export default function SessionRow({ session, isActive, isBusy, onOpen, onRename, onDelete }: Props) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(session.task)
 
@@ -60,6 +61,7 @@ export default function SessionRow({ session, isActive, onOpen, onRename, onDele
       title={session.task}
     >
       <span className="session-item-label">
+        {isBusy && <span className="session-busy-dot" title="A task is running in this chat" />}
         {session.task || '(untitled)'}
         {lastAssistant?.provider ? ` · ${lastAssistant.provider}` : ''}
         {lastTs ? ` · ${relativeTime(Date.parse(lastTs))}` : ''}

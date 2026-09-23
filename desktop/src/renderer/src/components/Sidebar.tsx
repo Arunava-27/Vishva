@@ -1,13 +1,16 @@
-import type { ProjectData, ProviderStatus, SessionData } from '../types'
+import type { ProjectData, ProviderStatus, SessionData, SkillData } from '../types'
 import ProjectList from './ProjectList'
 import ProviderPanel from './ProviderPanel'
 import SessionList from './SessionList'
+import SkillList from './SkillList'
 
 interface Props {
   providers: ProviderStatus[]
   sessions: SessionData[]
   projects: ProjectData[]
+  skills: SkillData[]
   activeSessionId: string | null
+  busySessionIds: Set<string>
   onNewChat: () => void
   onOpenSession: (id: string) => void
   onRenameSession: (id: string, task: string) => void
@@ -16,6 +19,9 @@ interface Props {
   onEditProject: (project: ProjectData) => void
   onDeleteProject: (id: string) => void
   onNewChatInProject: (projectId: string) => void
+  onNewSkill: () => void
+  onEditSkill: (skill: SkillData) => void
+  onDeleteSkill: (id: string) => void
   onRefreshProviders: () => void
   onInstall: (name: string) => void
   onLogin: (name: string) => void
@@ -23,13 +29,16 @@ interface Props {
   onCheckConnection: (name: string) => void
   checking: Record<string, string>
   onOpenSettings: () => void
+  onOpenMcpServers: () => void
 }
 
 export default function Sidebar({
   providers,
   sessions,
   projects,
+  skills,
   activeSessionId,
+  busySessionIds,
   onNewChat,
   onOpenSession,
   onRenameSession,
@@ -38,6 +47,9 @@ export default function Sidebar({
   onEditProject,
   onDeleteProject,
   onNewChatInProject,
+  onNewSkill,
+  onEditSkill,
+  onDeleteSkill,
   onRefreshProviders,
   onInstall,
   onLogin,
@@ -45,6 +57,7 @@ export default function Sidebar({
   onCheckConnection,
   checking,
   onOpenSettings,
+  onOpenMcpServers,
 }: Props) {
   // A session whose projectId no longer resolves to a real project (deleted,
   // or from before projects existed) shows up here instead of vanishing.
@@ -60,6 +73,7 @@ export default function Sidebar({
         projects={projects}
         sessions={sessions}
         activeSessionId={activeSessionId}
+        busySessionIds={busySessionIds}
         onNewProject={onNewProject}
         onEditProject={onEditProject}
         onDeleteProject={onDeleteProject}
@@ -71,10 +85,12 @@ export default function Sidebar({
       <SessionList
         sessions={ungroupedSessions}
         activeSessionId={activeSessionId}
+        busySessionIds={busySessionIds}
         onOpenSession={onOpenSession}
         onRename={onRenameSession}
         onDelete={onDeleteSession}
       />
+      <SkillList skills={skills} projects={projects} onNewSkill={onNewSkill} onEditSkill={onEditSkill} onDeleteSkill={onDeleteSkill} />
       <ProviderPanel
         providers={providers}
         onRefreshProviders={onRefreshProviders}
@@ -84,9 +100,14 @@ export default function Sidebar({
         onCheckConnection={onCheckConnection}
         checking={checking}
       />
-      <button className="link-btn sidebar-settings-btn" onClick={onOpenSettings}>
-        ⚙ Settings
-      </button>
+      <div className="sidebar-footer-row">
+        <button className="link-btn" onClick={onOpenMcpServers}>
+          🔌 MCP Servers
+        </button>
+        <button className="link-btn sidebar-settings-btn" onClick={onOpenSettings}>
+          ⚙ Settings
+        </button>
+      </div>
     </div>
   )
 }

@@ -57,11 +57,38 @@ export interface ChatEvent {
   message: string
   detail?: string
   timestamp: string
+  taskId: string
 }
 
 export interface Attachment {
   path: string
   origin: 'picked' | 'pasted'
+}
+
+export interface SkillData {
+  id: string
+  slug: string
+  name: string
+  description: string
+  body: string
+  scope: 'global' | 'project'
+  projectId: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export type McpTransport = 'stdio' | 'http'
+
+export interface McpServerConfig {
+  id: string
+  name: string
+  scope: 'global' | 'project'
+  projectId: string | null
+  transport: McpTransport
+  command: string
+  args: string[]
+  env: Record<string, string>
+  url: string
 }
 
 export interface AicliApi {
@@ -74,6 +101,8 @@ export interface AicliApi {
   attachDialog: () => Promise<string[]>
   pickDirectory: () => Promise<string | null>
   sendMessage: (args: {
+    taskId: string
+    sessionId: string
     sessionData: SessionData | null
     task: string
     cwd: string
@@ -83,7 +112,7 @@ export interface AicliApi {
     text: string
     attachments: string[]
   }) => Promise<{ session: SessionData; answeredBy: string }>
-  cancel: () => Promise<void>
+  cancel: (taskId: string) => Promise<void>
   onChatEvent: (callback: (event: ChatEvent) => void) => () => void
   installProvider: (name: string) => Promise<{ code: number | null }>
   loginProvider: (name: string) => Promise<{ code: number | null }>
@@ -100,6 +129,17 @@ export interface AicliApi {
   getAttachmentThumbnail: (path: string) => Promise<string | null>
   saveClipboardImage: (data: ArrayBuffer, ext: string) => Promise<string>
   deleteTempAttachment: (path: string) => Promise<void>
+  listSkills: () => Promise<SkillData[]>
+  createSkill: (name: string, description: string, body: string, scope: 'global' | 'project', projectId: string | null) => Promise<SkillData>
+  updateSkill: (
+    id: string,
+    patch: Partial<Pick<SkillData, 'name' | 'description' | 'body' | 'scope' | 'projectId'>>,
+  ) => Promise<SkillData>
+  deleteSkill: (id: string) => Promise<void>
+  listMcpServers: () => Promise<McpServerConfig[]>
+  addMcpServer: (input: Omit<McpServerConfig, 'id'>) => Promise<McpServerConfig>
+  updateMcpServer: (id: string, patch: Partial<Omit<McpServerConfig, 'id'>>) => Promise<McpServerConfig>
+  removeMcpServer: (id: string) => Promise<void>
 }
 
 declare global {
