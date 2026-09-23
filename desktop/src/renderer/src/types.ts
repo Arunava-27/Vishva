@@ -5,11 +5,29 @@ export interface ProviderAttempt {
   timestamp: string
 }
 
+export interface ToolCallSummary {
+  name: string
+  input?: unknown
+  result?: unknown
+  diff?: { added: number; removed: number }
+}
+
+export interface UsageSummary {
+  inputTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+  costUsd?: number
+  diff?: { added: number; removed: number }
+  other?: Record<string, number>
+}
+
 export interface Message {
   role: 'user' | 'assistant' | 'system'
   text: string
   provider: string | null
   timestamp: string
+  toolCalls?: ToolCallSummary[]
+  usage?: UsageSummary
 }
 
 export interface SessionData {
@@ -49,7 +67,7 @@ export interface Settings {
   defaultFallbackOrder: string[]
 }
 
-export type ChatEventKind = 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted'
+export type ChatEventKind = 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted' | 'tool' | 'usage'
 
 export interface ChatEvent {
   kind: ChatEventKind
@@ -58,6 +76,12 @@ export interface ChatEvent {
   detail?: string
   timestamp: string
   taskId: string
+  toolId?: string
+  toolName?: string
+  toolInput?: unknown
+  toolResult?: unknown
+  toolDiff?: { added: number; removed: number }
+  usage?: UsageSummary
 }
 
 export interface Attachment {

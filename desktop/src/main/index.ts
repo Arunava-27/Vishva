@@ -434,6 +434,15 @@ ipcMain.handle(
       }
     }
 
+    // an existing session otherwise keeps whatever cwd it was created with
+    // forever - re-sync from the project each turn so editing a project's
+    // folder actually takes effect on the session's next message, not just
+    // on brand-new chats.
+    if (session.data.projectId) {
+      const liveCwd = projectCwd(session.data.projectId)
+      if (liveCwd && liveCwd !== session.data.cwd) session.data.cwd = liveCwd
+    }
+
     const answeredBy = await sendMessage(session, args.activeProvider, args.fallbackOrder, args.text, {
       attachments: args.attachments,
       onEvent: (chatEvent) => event.sender.send('chat:event', { ...chatEvent, taskId: args.taskId }),

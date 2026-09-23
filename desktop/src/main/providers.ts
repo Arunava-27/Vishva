@@ -39,6 +39,25 @@ export interface RunResult {
   rawStderr: string
 }
 
+/** One normalized event extracted from a provider's NDJSON stream line. Each
+ * provider's real schema is completely different (see parseClaudeLine et al.
+ * below) - this is the shape they all get translated into. */
+export type ProviderStreamEvent =
+  | { type: 'reply'; text: string }
+  | { type: 'tool'; id?: string; name: string; input?: unknown; result?: unknown; diff?: { added: number; removed: number } }
+  | {
+      type: 'usage'
+      tokens?: { input?: number; output?: number; reasoning?: number }
+      costUsd?: number
+      diff?: { added: number; removed: number }
+      other?: Record<string, number>
+    }
+
+/** The subset of ProviderStreamEvent that ever actually reaches
+ * RunOptions.onStreamEvent - 'reply' events are consumed internally by
+ * runProvider itself (they become RunResult.output) and never forwarded. */
+export type ProviderToolOrUsageEvent = Exclude<ProviderStreamEvent, { type: 'reply' }>
+
 const FAILURE_PATTERNS: [RegExp, RunStatus][] = [
   [/rate.?limit|usage limit|quota|too many requests/i, 'RATE_LIMIT'],
   [/unauthoriz|not logged in|authentication fail|please log ?in|invalid api key/i, 'AUTH_FAILURE'],
@@ -65,8 +84,14 @@ export function buildArgs(
   attachments: string[] = [],
   attachmentFlag: string | null = null,
   addDirFlag: string | null = null,
+  cwd: string | null = null,
 ): string[] {
   const args = formatTemplate(template, prompt, sessionId)
+  // grants the CLI's own tools (Read/Glob/etc) access to the project's
+  // working directory even when the user hasn't attached any specific file -
+  // previously --add-dir was only ever emitted per-attachment, so a chat
+  // with no attachments got no folder access at all beyond spawn's cwd.
+  if (cwd && addDirFlag) args.push(addDirFlag, cwd)
   for (const filePath of attachments) {
     if (attachmentFlag) args.push(attachmentFlag, filePath)
     if (addDirFlag) args.push(addDirFlag, path.dirname(path.resolve(filePath)))
@@ -167,6 +192,13 @@ export interface Provider {
    * dotted `-c mcp_servers.<name>.*=...` config overrides directly on the
    * invocation instead, so it needs its own arg-builder. */
   mcpServerArgsFn?: (servers: McpServerConfig[]) => string[]
+  /** All 4 CLIs have an NDJSON streaming output mode (confirmed live, not
+   * from docs) with structured per-tool-call events and real usage numbers -
+   * this normalizes one already-JSON.parse'd line from that stream into zero
+   * or more ProviderStreamEvents. Absent means the provider isn't switched to
+   * a streaming flag (none today - kept optional for a future 5th provider
+   * that might not have one). */
+  parseStreamLine?: (line: Record<string, unknown>) => ProviderStreamEvent[]
 }
 
 /** Builds whatever extra CLI args a provider needs to see the given MCP
@@ -223,6 +255,109 @@ export function codexMcpArgs(servers: McpServerConfig[]): string[] {
   return args
 }
 
+/** claude, with `--output-format stream-json`: one JSON object per line.
+ * `{"type":"assistant","message":{"content":[{"type":"tool_use",...}],"usage":{...}}}`
+ * per model turn, final `{"type":"result","result":"<reply>","total_cost_usd":N,"usage":{...}}`. */
+function parseClaudeLine(line: any): ProviderStreamEvent[] {
+  const out: ProviderStreamEvent[] = []
+  if (line.type === 'assistant') {
+    for (const block of line.message?.content ?? []) {
+      if (block?.type === 'tool_use') out.push({ type: 'tool', id: block.id, name: block.name, input: block.input })
+    }
+    const usage = line.message?.usage
+    if (usage) out.push({ type: 'usage', tokens: { input: usage.input_tokens, output: usage.output_tokens } })
+  }
+  if (line.type === 'result') {
+    if (typeof line.result === 'string') out.push({ type: 'reply', text: line.result })
+    if (line.usage || typeof line.total_cost_usd === 'number') {
+      out.push({
+        type: 'usage',
+        tokens: { input: line.usage?.input_tokens, output: line.usage?.output_tokens },
+        costUsd: line.total_cost_usd,
+      })
+    }
+  }
+  return out
+}
+
+/** codex, with `exec --json` added: NDJSON events plus one non-JSON banner
+ * line ("Reading additional input from stdin...") that JSON.parse simply
+ * fails on and the caller skips. `{"type":"item.completed","item":{"type":
+ * "command_execution"|"agent_message",...}}`, final `{"type":"turn.completed",
+ * "usage":{...}}` (no reply text on that line - the reply is the last
+ * agent_message item). File-edit tool calls haven't been observed live yet -
+ * only shell command_execution; an unrecognized item.type is intentionally
+ * dropped rather than guessed at (see Phase 3 plan's risk notes). */
+function parseCodexLine(line: any): ProviderStreamEvent[] {
+  const out: ProviderStreamEvent[] = []
+  if (line.type === 'item.completed') {
+    const item = line.item
+    if (item?.type === 'command_execution') {
+      out.push({ type: 'tool', name: 'shell', input: item.command, result: item.aggregated_output })
+    } else if (item?.type === 'agent_message') {
+      out.push({ type: 'reply', text: item.text })
+    }
+  }
+  if (line.type === 'turn.completed' && line.usage) {
+    out.push({
+      type: 'usage',
+      tokens: { input: line.usage.input_tokens, output: line.usage.output_tokens, reasoning: line.usage.reasoning_output_tokens },
+    })
+  }
+  return out
+}
+
+/** copilot, with `--output-format json`. `{"type":"tool.execution_start"|
+ * "execution_complete","data":{"toolCallId","toolName","arguments","result"}}`
+ * (paired by toolCallId), `{"type":"assistant.message","data":{"content":
+ * "<full reply>"}}` (NOT .message_delta/.message_start, which are chunks),
+ * final `{"type":"result","usage":{"premiumRequests",...,"codeChanges":
+ * {"linesAdded","linesRemoved"}}}` - real diff stats already computed by the
+ * CLI itself, no reply text on this line. premiumRequests isn't a token
+ * count - kept in `other`, not `tokens`. */
+function parseCopilotLine(line: any): ProviderStreamEvent[] {
+  const out: ProviderStreamEvent[] = []
+  if (line.type === 'tool.execution_start' || line.type === 'tool.execution_complete') {
+    out.push({ type: 'tool', id: line.data?.toolCallId, name: line.data?.toolName, input: line.data?.arguments, result: line.data?.result })
+  }
+  if (line.type === 'assistant.message') {
+    if (typeof line.data?.content === 'string') out.push({ type: 'reply', text: line.data.content })
+  }
+  if (line.type === 'result') {
+    const changes = line.usage?.codeChanges
+    out.push({
+      type: 'usage',
+      other: typeof line.usage?.premiumRequests === 'number' ? { premiumRequests: line.usage.premiumRequests } : undefined,
+      diff: changes ? { added: changes.linesAdded ?? 0, removed: changes.linesRemoved ?? 0 } : undefined,
+    })
+  }
+  return out
+}
+
+/** antigravity/agy, with `--output-format stream-json`. Uses `"event"` as its
+ * discriminant key, not `"type"`. `{"event":"step_update","step_update":
+ * {"step_type":"tool","state":"ACTIVE"|"DONE","tool_name","tool_info":
+ * {"parameters"}}}` - confirmed live that the SAME tool call gets a
+ * step_update twice, once at "ACTIVE" (dispatched) and again at "DONE"
+ * (finished) with identical tool_info - only the "DONE" one is taken, or
+ * every tool call would be double-recorded. Final `{"event":"result",
+ * "result":{"response":"<reply>","usage":{...}}}` (same "response" field name
+ * displayOutput() already knows about). Per-step usage is deliberately not
+ * surfaced here - whether it's cumulative or a delta wasn't confirmed live,
+ * only the final total is trustworthy today. */
+function parseAntigravityLine(line: any): ProviderStreamEvent[] {
+  const out: ProviderStreamEvent[] = []
+  if (line.event === 'step_update' && line.step_update?.step_type === 'tool' && line.step_update?.state === 'DONE') {
+    out.push({ type: 'tool', name: line.step_update.tool_name, input: line.step_update.tool_info?.parameters })
+  }
+  if (line.event === 'result') {
+    if (typeof line.result?.response === 'string') out.push({ type: 'reply', text: line.result.response })
+    const usage = line.result?.usage
+    if (usage) out.push({ type: 'usage', tokens: { input: usage.input_tokens, output: usage.output_tokens } })
+  }
+  return out
+}
+
 /** Runs a provider's statusCommand and reads its `loggedIn` field. Returns
  * null (unknown, not unauthenticated) when the provider has no such command -
  * distinct from false, since "unknown" and "confirmed logged out" need
@@ -245,7 +380,17 @@ export interface RunOptions {
   timeoutMs?: number
   attachments?: string[]
   mcpServers?: McpServerConfig[]
+  /** The project/session's own working directory - sets the spawned
+   * process's actual cwd (previously never set at all, so every provider
+   * silently ran from Electron's own process directory) and, for providers
+   * with addDirFlag, grants tool access to it even with zero attachments. */
+  cwd?: string
   onProcess?: (proc: ChildProcessWithoutNullStreams) => void
+  /** Fired mid-flight (before the process exits) for every tool-call/usage
+   * event `parseStreamLine` extracts. The eventual reply text is handled
+   * internally and surfaces through RunResult.output as always - not
+   * forwarded here. */
+  onStreamEvent?: (evt: ProviderToolOrUsageEvent) => void
 }
 
 /**
@@ -269,7 +414,7 @@ export async function runProvider(
   const template = opts.useResume && provider.resumeArgs ? provider.resumeArgs : provider.printArgs
   const args = buildArgs(
     template, prompt, sessionId,
-    opts.attachments ?? [], provider.attachmentFlag ?? null, provider.addDirFlag ?? null,
+    opts.attachments ?? [], provider.attachmentFlag ?? null, provider.addDirFlag ?? null, opts.cwd ?? null,
   )
 
   const outputFile = provider.outputFileFlag ? path.join(os.tmpdir(), `aicli-output-${randomUUID()}.txt`) : null
@@ -286,20 +431,49 @@ export async function runProvider(
       // invocations ever need input from us. Default stdio is pipes for
       // stdout/stderr, so this is really a ChildProcessWithoutNullStreams -
       // cross-spawn's types just say the more general ChildProcess.
-      proc = spawn(resolved, args, { stdio: ['ignore', 'pipe', 'pipe'] }) as ChildProcessWithoutNullStreams
+      proc = spawn(resolved, args, { cwd: opts.cwd, stdio: ['ignore', 'pipe', 'pipe'] }) as ChildProcessWithoutNullStreams
     } catch {
       resolve({ status: 'NOT_INSTALLED', output: '', sessionId, rawStderr: '' })
       return
     }
     opts.onProcess?.(proc)
 
+    // setEncoding lets Node's stream buffer a multi-byte UTF-8 char split
+    // across a chunk boundary instead of corrupting it via per-chunk
+    // Buffer.toString() - stdlib fix, not something we need to hand-roll.
+    proc.stdout.setEncoding('utf8')
+    proc.stderr.setEncoding('utf8')
+
     let stdout = ''
     let stderr = ''
-    proc.stdout.on('data', (d) => (stdout += d.toString()))
+    let replyText: string | null = null
+    let lineBuf = ''
+    proc.stdout.on('data', (chunk: string) => {
+      stdout += chunk
+      if (!provider.parseStreamLine) return
+      lineBuf += chunk
+      const lines = lineBuf.split('\n')
+      lineBuf = lines.pop() ?? '' // last element is a partial line, held for the next chunk
+      for (const raw of lines) {
+        const trimmed = raw.trim()
+        if (!trimmed) continue
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(trimmed)
+        } catch {
+          continue // noise, e.g. codex's "Reading additional input from stdin..." banner - not an error
+        }
+        if (typeof parsed !== 'object' || parsed === null) continue
+        for (const evt of provider.parseStreamLine(parsed as Record<string, unknown>)) {
+          if (evt.type === 'reply') replyText = evt.text
+          else opts.onStreamEvent?.(evt)
+        }
+      }
+    })
     proc.stderr.on('data', (d) => (stderr += d.toString()))
 
     const finish = (status: RunStatus) => {
-      let output = stdout
+      let output = replyText ?? stdout
       if (outputFile) {
         try {
           output = readFileSync(outputFile, 'utf-8')
@@ -339,8 +513,10 @@ export const PROVIDERS: Record<string, Provider> = {
     name: 'claude',
     binary: 'claude',
     installHint: 'winget install Anthropic.ClaudeCode  (or: npm install -g @anthropic-ai/claude-code)',
-    printArgs: ['-p', '{prompt}', '--session-id', '{session_id}', '--output-format', 'json'],
-    resumeArgs: ['-p', '{prompt}', '--resume', '{session_id}', '--output-format', 'json'],
+    // stream-json confirmed live: one JSON object per line, structured
+    // tool_use blocks and real usage/cost data - see parseClaudeLine.
+    printArgs: ['-p', '{prompt}', '--session-id', '{session_id}', '--output-format', 'stream-json', '--verbose'],
+    resumeArgs: ['-p', '{prompt}', '--resume', '{session_id}', '--output-format', 'stream-json', '--verbose'],
     // no local-file-attachment flag; grant folder access and let its own
     // Read tool (which handles images too) open the path referenced in the prompt.
     addDirFlag: '--add-dir',
@@ -350,6 +526,7 @@ export const PROVIDERS: Record<string, Provider> = {
     statusCommand: { cmd: 'claude', args: ['auth', 'status'] },
     // confirmed live via `claude --help`: repeatable, points at any JSON file - safe to use a temp file we own.
     mcpConfigFlag: '--mcp-config',
+    parseStreamLine: parseClaudeLine,
   },
   codex: {
     name: 'codex',
@@ -370,8 +547,13 @@ export const PROVIDERS: Record<string, Provider> = {
     // wiring that up naively risks silently resuming the wrong chat. Handled
     // the same honest way as antigravity: full reconstructed context each
     // turn instead of a broken/risky "free" resume.
+    // --json confirmed live: structured item.completed/turn.completed NDJSON
+    // events - see parseCodexLine. outputFileFlag is kept wired as a fallback
+    // (finish() prefers the parsed reply, falls back to this file) until a
+    // real run confirms the two produce identical text - see Phase 3 plan's
+    // risk notes before deleting it.
     printArgs: [
-      'exec', '{prompt}',
+      'exec', '{prompt}', '--json',
       '--dangerously-bypass-approvals-and-sandbox', '--skip-git-repo-check',
     ],
     outputFileFlag: '--output-last-message',
@@ -381,6 +563,7 @@ export const PROVIDERS: Record<string, Provider> = {
     loginCommand: { cmd: 'codex', args: ['login'] },
     // confirmed live via `codex --help`: no file-flag, only repeatable `-c mcp_servers.<name>.*=` overrides.
     mcpServerArgsFn: codexMcpArgs,
+    parseStreamLine: parseCodexLine,
   },
   copilot: {
     name: 'copilot',
@@ -388,8 +571,11 @@ export const PROVIDERS: Record<string, Provider> = {
     installHint: 'winget install GitHub.Copilot  (or: npm install -g @github/copilot)',
     // --allow-all-tools is required by the CLI itself for non-interactive mode
     // (it will not run -p without it - there's no human to answer permission prompts).
-    printArgs: ['-p', '{prompt}', '--session-id', '{session_id}', '--allow-all-tools'],
-    resumeArgs: ['-p', '{prompt}', '--resume', '{session_id}', '--allow-all-tools'],
+    // --output-format json confirmed live: NDJSON with tool.execution_start/
+    // complete events and a final result event carrying real diff stats
+    // (codeChanges.linesAdded/linesRemoved) - see parseCopilotLine.
+    printArgs: ['-p', '{prompt}', '--session-id', '{session_id}', '--allow-all-tools', '--output-format', 'json'],
+    resumeArgs: ['-p', '{prompt}', '--resume', '{session_id}', '--allow-all-tools', '--output-format', 'json'],
     attachmentFlag: '--attachment',
     addDirFlag: '--add-dir',
     verified: true,
@@ -397,6 +583,7 @@ export const PROVIDERS: Record<string, Provider> = {
     loginCommand: { cmd: 'copilot', args: ['login'] },
     // confirmed live via `copilot --help`: session-only, augments (doesn't persist into) ~/.copilot/mcp-config.json.
     mcpConfigFlag: '--additional-mcp-config',
+    parseStreamLine: parseCopilotLine,
   },
   antigravity: {
     name: 'antigravity',
@@ -419,8 +606,12 @@ export const PROVIDERS: Record<string, Provider> = {
     // claude/copilot's "we pick the id" model, and not wired up yet (no
     // resumeArgs below), so every agy turn currently gets the full
     // handoff/reconstruction prompt rather than free native resume.
-    printArgs: ['-p', '{prompt}', '--output-format', 'json', '--dangerously-skip-permissions'],
+    // stream-json confirmed live: "event"-keyed NDJSON (not "type"-keyed like
+    // the others), step_update tool events, final result event with
+    // "response" reply text - see parseAntigravityLine.
+    printArgs: ['-p', '{prompt}', '--output-format', 'stream-json', '--dangerously-skip-permissions'],
     verified: true,
+    parseStreamLine: parseAntigravityLine,
     // no scriptable login/status command exists at all (confirmed from the
     // CLI reference docs - only a `/logout` *slash command* inside the
     // interactive TUI). First-time auth happens via running `agy`

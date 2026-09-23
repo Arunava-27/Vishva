@@ -497,10 +497,41 @@ body {
 .activity-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: activity-pulse 1.2s ease-in-out infinite; }
 @keyframes activity-pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
 .activity-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.activity-row { display: flex; gap: 6px; color: var(--text-dim); }
+.activity-row { display: flex; flex-wrap: wrap; gap: 6px; color: var(--text-dim); }
 .activity-provider { font-weight: 600; color: var(--text); }
 .activity-failure .activity-message { color: var(--danger); }
 .activity-success .activity-message { color: var(--accent); }
+.activity-detail { flex-basis: 100%; font-size: 11px; opacity: 0.75; }
+
+.tool-call-row { color: var(--text-dim); }
+.tool-call-row summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  list-style: none;
+}
+.tool-call-row summary::-webkit-details-marker { display: none; }
+.tool-call-row summary::before { content: "▸"; font-size: 10px; }
+.tool-call-row[open] summary::before { content: "▾"; }
+.tool-call-provider { font-weight: 600; color: var(--text); }
+.tool-call-name { font-family: "SF Mono", Consolas, monospace; }
+.tool-call-diff { display: flex; gap: 4px; font-size: 12px; }
+.tool-call-diff-added { color: #2e7d32; }
+.tool-call-diff-removed { color: var(--danger); }
+.tool-call-body {
+  background: var(--code-bg);
+  color: #f1f1f1;
+  padding: 8px;
+  margin: 4px 0 0;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 12px;
+  max-height: 240px;
+}
+
+.turn-tools { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.turn-usage { margin-top: 8px; font-size: 12px; color: var(--text-dim); }
 
 .code-block { position: relative; }
 .copy-code-btn {
@@ -515,9 +546,14 @@ body {
   font-size: 11px;
   cursor: pointer;
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity 0.1s, background-color 0.15s, transform 0.15s;
 }
 .code-block:hover .copy-code-btn { opacity: 1; }
+.copy-code-btn.copied {
+  opacity: 1;
+  background: var(--accent);
+  transform: scale(1.06);
+}
 
 .composer {
   border-top: 1px solid var(--border);

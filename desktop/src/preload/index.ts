@@ -1,12 +1,25 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 interface ChatEvent {
-  kind: 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted'
+  kind: 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted' | 'tool' | 'usage'
   provider: string | null
   message: string
   detail?: string
   timestamp: string
   taskId: string
+  toolId?: string
+  toolName?: string
+  toolInput?: unknown
+  toolResult?: unknown
+  toolDiff?: { added: number; removed: number }
+  usage?: {
+    inputTokens?: number
+    outputTokens?: number
+    reasoningTokens?: number
+    costUsd?: number
+    diff?: { added: number; removed: number }
+    other?: Record<string, number>
+  }
 }
 
 const api = {

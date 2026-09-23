@@ -31,11 +31,31 @@ export interface ProviderAttempt {
   timestamp: string
 }
 
+export interface ToolCallSummary {
+  name: string
+  input?: unknown
+  result?: unknown
+  diff?: { added: number; removed: number }
+}
+
+export interface UsageSummary {
+  inputTokens?: number
+  outputTokens?: number
+  reasoningTokens?: number
+  costUsd?: number
+  diff?: { added: number; removed: number }
+  other?: Record<string, number>
+}
+
 export interface Message {
   role: 'user' | 'assistant' | 'system'
   text: string
   provider: string | null
   timestamp: string
+  // both optional - old session JSON files on disk simply lack these keys,
+  // no migration needed, they come back undefined on load.
+  toolCalls?: ToolCallSummary[]
+  usage?: UsageSummary
 }
 
 export interface SessionData {
@@ -123,8 +143,21 @@ export class Session {
     this.save()
   }
 
-  addMessage(role: Message['role'], text: string, provider: string | null = null): void {
-    this.data.messages.push({ role, text, provider, timestamp: new Date().toISOString() })
+  addMessage(
+    role: Message['role'],
+    text: string,
+    provider: string | null = null,
+    toolCalls?: ToolCallSummary[],
+    usage?: UsageSummary,
+  ): void {
+    this.data.messages.push({
+      role,
+      text,
+      provider,
+      timestamp: new Date().toISOString(),
+      ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
+      ...(usage ? { usage } : {}),
+    })
     this.save()
   }
 
