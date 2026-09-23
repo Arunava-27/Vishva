@@ -5,13 +5,12 @@ import SessionRow from './SessionRow'
 interface Props {
   sessions: SessionData[]
   activeSessionId: string | null
-  onNewChat: () => void
   onOpenSession: (id: string) => void
   onRename: (id: string, task: string) => void
   onDelete: (id: string) => void
 }
 
-export default function SessionList({ sessions, activeSessionId, onNewChat, onOpenSession, onRename, onDelete }: Props) {
+export default function SessionList({ sessions, activeSessionId, onOpenSession, onRename, onDelete }: Props) {
   const [search, setSearch] = useState('')
 
   const filtered = search.trim()
@@ -20,10 +19,6 @@ export default function SessionList({ sessions, activeSessionId, onNewChat, onOp
 
   return (
     <div>
-      <button className="new-chat-btn" onClick={onNewChat}>
-        + New chat
-      </button>
-
       <h2>Chats</h2>
       {sessions.length > 3 && (
         <input

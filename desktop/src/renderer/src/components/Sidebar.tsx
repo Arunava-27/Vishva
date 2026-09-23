@@ -53,6 +53,9 @@ export default function Sidebar({
 
   return (
     <div className="sidebar">
+      <button className="new-chat-btn primary-new-chat" onClick={onNewChat}>
+        + New chat
+      </button>
       <ProjectList
         projects={projects}
         sessions={sessions}
@@ -68,7 +71,6 @@ export default function Sidebar({
       <SessionList
         sessions={ungroupedSessions}
         activeSessionId={activeSessionId}
-        onNewChat={onNewChat}
         onOpenSession={onOpenSession}
         onRename={onRenameSession}
         onDelete={onDeleteSession}

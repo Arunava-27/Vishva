@@ -35,6 +35,7 @@ export default function ProjectList({
             + New
           </span>
         </h2>
+        <div className="provider-row">No projects yet</div>
       </div>
     )
   }
