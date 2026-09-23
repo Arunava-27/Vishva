@@ -11,9 +11,9 @@ export default function MessageBubble({ message }: { message: Message }) {
   const who = message.role === 'user' ? 'You' : message.role === 'assistant' ? message.provider ?? 'assistant' : 'System'
 
   return (
-    <div className={`bubble-row ${message.role}`}>
-      <div className={`bubble ${message.role}`}>
-        <div className="who">{who}</div>
+    <div className={`turn turn-${message.role}`}>
+      <div className={`turn-role turn-role-${message.role}`}>{who}</div>
+      <div className="turn-body">
         <ReactMarkdown
           remarkPlugins={[remarkGfm]}
           components={{
@@ -43,3 +43,4 @@ export default function MessageBubble({ message }: { message: Message }) {
     </div>
   )
 }
+

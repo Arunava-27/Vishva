@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
+interface ChatEvent {
+  kind: 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted'
+  provider: string | null
+  message: string
+  detail?: string
+  timestamp: string
+}
+
 const api = {
   // File.path was removed from the renderer (Electron 32+); webUtils is the
   // replacement, and it's only reachable from preload - hence this bridge
@@ -23,8 +31,8 @@ const api = {
     attachments: string[]
   }) => ipcRenderer.invoke('chat:send', args),
   cancel: () => ipcRenderer.invoke('chat:cancel'),
-  onChatEvent: (callback: (line: string) => void) => {
-    const listener = (_event: unknown, line: string) => callback(line)
+  onChatEvent: (callback: (event: ChatEvent) => void) => {
+    const listener = (_event: unknown, chatEvent: ChatEvent) => callback(chatEvent)
     ipcRenderer.on('chat:event', listener)
     return () => ipcRenderer.removeListener('chat:event', listener)
   },
@@ -45,6 +53,9 @@ const api = {
     ipcRenderer.invoke('projects:create', name, instructions, cwd),
   updateProject: (id: string, patch: Record<string, unknown>) => ipcRenderer.invoke('projects:update', id, patch),
   deleteProject: (id: string) => ipcRenderer.invoke('projects:delete', id),
+  getAttachmentThumbnail: (path: string) => ipcRenderer.invoke('attachments:thumbnail', path),
+  saveClipboardImage: (data: ArrayBuffer, ext: string) => ipcRenderer.invoke('attachments:saveClipboardImage', data, ext),
+  deleteTempAttachment: (path: string) => ipcRenderer.invoke('attachments:deleteTemp', path),
 }
 
 export type AicliApi = typeof api

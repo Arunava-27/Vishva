@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { getKnownAuthState, setKnownAuthState } from './authState.ts'
@@ -264,6 +266,35 @@ ipcMain.handle('dialog:attach', async (): Promise<string[]> => {
   return result.canceled ? [] : result.filePaths
 })
 
+const THUMB_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'])
+const THUMB_MAX_BYTES = 3 * 1024 * 1024 // ponytail: skip preview past this, add real thumbnail generation (sharp) if that proves too small
+
+ipcMain.handle('attachments:thumbnail', (_e: IpcMainInvokeEvent, filePath: string): string | null => {
+  const ext = path.extname(filePath).toLowerCase()
+  if (!THUMB_EXT.has(ext)) return null
+  try {
+    if (fs.statSync(filePath).size > THUMB_MAX_BYTES) return null
+    const mime = ext === '.jpg' ? 'jpeg' : ext.slice(1)
+    return `data:image/${mime};base64,${fs.readFileSync(filePath).toString('base64')}`
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('attachments:saveClipboardImage', (_e: IpcMainInvokeEvent, data: ArrayBuffer, ext: string): string => {
+  const tmp = path.join(os.tmpdir(), `aicli-paste-${randomUUID()}.${ext}`)
+  fs.writeFileSync(tmp, Buffer.from(new Uint8Array(data)))
+  return tmp
+})
+
+ipcMain.handle('attachments:deleteTemp', (_e: IpcMainInvokeEvent, filePath: string): void => {
+  try {
+    fs.unlinkSync(filePath)
+  } catch {
+    // already gone - fine
+  }
+})
+
 ipcMain.handle(
   'chat:send',
   async (
@@ -300,7 +331,7 @@ ipcMain.handle(
 
     const answeredBy = await sendMessage(session, args.activeProvider, args.fallbackOrder, args.text, {
       attachments: args.attachments,
-      onEvent: (line) => event.sender.send('chat:event', line),
+      onEvent: (chatEvent) => event.sender.send('chat:event', chatEvent),
       onProcess: (proc) => {
         currentProc = proc
       },

@@ -6,10 +6,11 @@ import SetupPanel, { type SetupState } from './components/SetupPanel'
 import SettingsPanel from './components/SettingsPanel'
 import FallbackOrderEditor from './components/FallbackOrderEditor'
 import ProjectFormPanel from './components/ProjectFormPanel'
+import ActivityFeed from './components/ActivityFeed'
 import { useProviderPanel } from './hooks/useProviderPanel'
 import { useSessionList } from './hooks/useSessionList'
 import { useProjectList } from './hooks/useProjectList'
-import type { Message, ProjectData, Settings, SessionData } from './types'
+import type { ChatEvent, Message, ProjectData, Settings, SessionData } from './types'
 
 const DEFAULT_ORDER = ['claude', 'codex', 'copilot', 'antigravity']
 const DEFAULT_SETTINGS: Settings = { theme: 'system', defaultProvider: 'claude', defaultFallbackOrder: DEFAULT_ORDER }
@@ -24,7 +25,9 @@ export default function App() {
   const [activeProvider, setActiveProvider] = useState(DEFAULT_SETTINGS.defaultProvider)
   const [fallbackOrder, setFallbackOrder] = useState<string[]>(DEFAULT_SETTINGS.defaultFallbackOrder)
   const [busy, setBusy] = useState(false)
-  const [statusLine, setStatusLine] = useState('')
+  const [activity, setActivity] = useState<ChatEvent[]>([])
+  const [turnStartedAt, setTurnStartedAt] = useState<number | null>(null)
+  const [elapsedSec, setElapsedSec] = useState(0)
   const [setupState, setSetupState] = useState<SetupState | null>(null)
   const [projectFormState, setProjectFormState] = useState<ProjectFormState | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -43,7 +46,7 @@ export default function App() {
       setActiveProvider(s.defaultProvider)
       setFallbackOrder(s.defaultFallbackOrder)
     })
-    const offChat = window.aicli.onChatEvent(setStatusLine)
+    const offChat = window.aicli.onChatEvent((event) => setActivity((log) => [...log, event]))
     const offSetup = window.aicli.onSetupEvent((chunk) => {
       setSetupState((s) => (s ? { ...s, log: s.log + chunk } : s))
     })
@@ -56,7 +59,13 @@ export default function App() {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [session?.messages.length, statusLine])
+  }, [session?.messages.length, activity.length])
+
+  useEffect(() => {
+    if (turnStartedAt === null) return
+    const id = setInterval(() => setElapsedSec(Math.round((Date.now() - turnStartedAt) / 1000)), 1000)
+    return () => clearInterval(id)
+  }, [turnStartedAt])
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme === 'system' ? '' : settings.theme
@@ -84,10 +93,11 @@ export default function App() {
 
   async function handleSend(text: string, attachments: string[]) {
     const cwd = activeProject?.cwd ?? '.'
+    const title = makeTitle(text)
     const optimistic: Message = { role: 'user', text, provider: null, timestamp: new Date().toISOString() }
     const base = session ?? {
       id: '',
-      task: text.slice(0, 60),
+      task: title,
       cwd,
       projectId: activeProjectId,
       history: [],
@@ -96,11 +106,13 @@ export default function App() {
     }
     setSession({ ...base, messages: [...base.messages, optimistic] })
     setBusy(true)
-    setStatusLine('')
+    setActivity([])
+    setTurnStartedAt(Date.now())
+    setElapsedSec(0)
 
     const { session: updated, answeredBy } = await window.aicli.sendMessage({
       sessionData: session,
-      task: text.slice(0, 60),
+      task: title,
       cwd,
       projectId: activeProjectId,
       activeProvider,
@@ -112,7 +124,8 @@ export default function App() {
     setSession(updated)
     setActiveProvider(answeredBy)
     setBusy(false)
-    setStatusLine('')
+    setActivity([])
+    setTurnStartedAt(null)
     sessionList.refreshSessions()
   }
 
@@ -230,7 +243,7 @@ export default function App() {
           {(session?.messages ?? []).map((m, i) => (
             <MessageBubble key={i} message={m} />
           ))}
-          {busy && statusLine && <div className="thinking">{statusLine}</div>}
+          {busy && <ActivityFeed events={activity} elapsedSec={elapsedSec} />}
           <div ref={messagesEndRef} />
         </div>
 
@@ -242,4 +255,12 @@ export default function App() {
 
 function providerNames(providers: { name: string }[]): string[] {
   return providers.length ? providers.map((p) => p.name) : DEFAULT_ORDER
+}
+
+function makeTitle(text: string): string {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  if (clean.length <= 60) return clean
+  const cut = clean.slice(0, 60)
+  const lastSpace = cut.lastIndexOf(' ')
+  return (lastSpace > 20 ? cut.slice(0, lastSpace) : cut) + '…'
 }

@@ -15,7 +15,21 @@ import { clearCooldown, getCooldownInfo, INDEFINITE_COOLDOWN, isOnCooldown, reco
 import { displayOutput, PROVIDERS, runProvider } from './providers.ts'
 import type { Session } from './session.ts'
 
-export type EventFn = (line: string) => void
+export type ChatEventKind = 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted'
+
+export interface ChatEvent {
+  kind: ChatEventKind
+  provider: string | null
+  message: string
+  detail?: string
+  timestamp: string
+}
+
+export type EventFn = (event: ChatEvent) => void
+
+function makeEvent(kind: ChatEventKind, provider: string | null, message: string, detail?: string): ChatEvent {
+  return { kind, provider, message, detail, timestamp: new Date().toISOString() }
+}
 
 export interface SendMessageOptions {
   attachments?: string[]
@@ -54,13 +68,13 @@ export async function sendMessage(
   for (let i = 0; i < order.length; i++) {
     const name = order[i]
     if (isCancelled()) {
-      onEvent('[aicli] cancelled.')
+      onEvent(makeEvent('cancelled', null, 'Cancelled.'))
       return activeProvider
     }
 
     const provider = PROVIDERS[name]
     if (!provider) {
-      onEvent(`[aicli] unknown provider '${name}', skipping`)
+      onEvent(makeEvent('skip', name, `Unknown provider '${name}', skipping`))
       continue
     }
 
@@ -75,10 +89,10 @@ export async function sendMessage(
           ? `retry in ${Math.ceil((cooldownUntil - Date.now()) / 60_000)}m`
           : 'needs re-login/check'
       if (i > 0) {
-        onEvent(`[${name}] skipped - on cooldown (${lastFailureReason}, ${detail})`)
+        onEvent(makeEvent('skip', name, 'On cooldown', `${lastFailureReason}, ${detail}`))
         continue
       }
-      onEvent(`[${name}] note: on cooldown (${lastFailureReason}) but trying anyway - you selected it`)
+      onEvent(makeEvent('attempt', name, 'On cooldown, trying anyway (you selected it)', lastFailureReason ?? undefined))
     }
 
     const usedBefore = session.data.history.some((h) => h.provider === name && h.status === 'SUCCESS')
@@ -90,7 +104,7 @@ export async function sendMessage(
     const canResumeNatively = usedBefore && !!provider.resumeArgs
     const prompt = canResumeNatively ? finalText : await session.handoffPrompt(finalText)
 
-    onEvent(`[${name}] thinking...`)
+    onEvent(makeEvent('attempt', name, 'Thinking...'))
     const result = await runProvider(provider, prompt, session.data.id, {
       useResume: canResumeNatively,
       attachments: opts.attachments,
@@ -101,30 +115,30 @@ export async function sendMessage(
     else recordFailure(name, result.status)
 
     if (result.status === 'NOT_INSTALLED') {
-      onEvent(`[${name}] not installed. Install with: ${provider.installHint}`)
+      onEvent(makeEvent('failure', name, 'Not installed', provider.installHint))
       continue
     }
 
     if (isCancelled()) {
-      onEvent(`[${name}] cancelled.`)
+      onEvent(makeEvent('cancelled', name, 'Cancelled.'))
       return activeProvider
     }
 
     if (result.status === 'SUCCESS') {
       const reply = displayOutput(result.output)
       session.addMessage('assistant', reply, name)
-      onEvent(`[${name}] ${reply}`)
+      onEvent(makeEvent('success', name, 'Responded.'))
       return name
     }
 
     const detail = result.rawStderr.trim().slice(0, 300) || '(no output)'
-    onEvent(`[${name}] ${result.status}. ${detail}`)
+    onEvent(makeEvent('failure', name, result.status, detail))
     if (i + 1 < order.length) {
-      onEvent(`[aicli] ${name} unavailable, handing off to the next provider...`)
+      onEvent(makeEvent('handoff', name, 'Falling back to the next provider...'))
     }
   }
 
   session.addMessage('system', '(all providers failed or are unavailable)')
-  onEvent('[aicli] all providers exhausted or unavailable.')
+  onEvent(makeEvent('exhausted', null, 'All providers exhausted or unavailable.'))
   return activeProvider
 }

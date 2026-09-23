@@ -49,6 +49,21 @@ export interface Settings {
   defaultFallbackOrder: string[]
 }
 
+export type ChatEventKind = 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted'
+
+export interface ChatEvent {
+  kind: ChatEventKind
+  provider: string | null
+  message: string
+  detail?: string
+  timestamp: string
+}
+
+export interface Attachment {
+  path: string
+  origin: 'picked' | 'pasted'
+}
+
 export interface AicliApi {
   getPathForFile: (file: File) => string
   listProviders: () => Promise<ProviderStatus[]>
@@ -69,7 +84,7 @@ export interface AicliApi {
     attachments: string[]
   }) => Promise<{ session: SessionData; answeredBy: string }>
   cancel: () => Promise<void>
-  onChatEvent: (callback: (line: string) => void) => () => void
+  onChatEvent: (callback: (event: ChatEvent) => void) => () => void
   installProvider: (name: string) => Promise<{ code: number | null }>
   loginProvider: (name: string) => Promise<{ code: number | null }>
   checkConnection: (name: string) => Promise<{ status: string }>
@@ -82,6 +97,9 @@ export interface AicliApi {
   createProject: (name: string, instructions: string, cwd: string) => Promise<ProjectData>
   updateProject: (id: string, patch: Partial<Pick<ProjectData, 'name' | 'instructions' | 'cwd'>>) => Promise<ProjectData>
   deleteProject: (id: string) => Promise<void>
+  getAttachmentThumbnail: (path: string) => Promise<string | null>
+  saveClipboardImage: (data: ArrayBuffer, ext: string) => Promise<string>
+  deleteTempAttachment: (path: string) => Promise<void>
 }
 
 declare global {

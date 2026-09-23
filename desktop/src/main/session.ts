@@ -48,6 +48,16 @@ export interface SessionData {
   status: string
 }
 
+function lastActivity(s: Session): number {
+  const last = s.data.messages.at(-1)?.timestamp
+  if (last) return Date.parse(last)
+  try {
+    return fs.statSync(Session.filePath(s.data.id)).mtimeMs
+  } catch {
+    return 0
+  }
+}
+
 export class Session {
   data: SessionData
 
@@ -80,8 +90,8 @@ export class Session {
     return fs
       .readdirSync(SESSIONS_DIR)
       .filter((f) => f.endsWith('.json'))
-      .sort()
       .map((f) => Session.load(f.slice(0, -'.json'.length)))
+      .sort((a, b) => lastActivity(b) - lastActivity(a))
   }
 
   save(): void {
