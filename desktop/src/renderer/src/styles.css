@@ -789,3 +789,72 @@ body {
   padding: 6px 20px;
   text-align: center;
 }
+
+.cooperative-clarify-prompt {
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.cooperative-clarify-question { color: var(--text); margin-bottom: 6px; line-height: 1.4; }
+.cooperative-clarify-row { display: flex; gap: 6px; }
+.cooperative-clarify-row input {
+  flex: 1;
+  min-width: 0;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 12px;
+}
+.cooperative-clarify-row button {
+  border: none;
+  border-radius: 6px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--accent);
+  color: white;
+}
+.cooperative-clarify-row button:disabled { opacity: 0.5; cursor: default; }
+
+.activity-clarify-question .activity-message,
+.activity-clarify-answered .activity-message { color: var(--accent); }
+.activity-clarify-cap-reached .activity-message { color: var(--text-dim); font-style: italic; }
+
+.cooperative-generated-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 14px 10px;
+}
+.cooperative-generated-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--bg-raised);
+  color: var(--text);
+}
+.cooperative-generated-file:hover { border-color: var(--accent); }
+.cooperative-generated-file-image img {
+  width: 24px;
+  height: 24px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+.cooperative-generated-file-name { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cooperative-reveal-btn {
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0.7;
+}
+.cooperative-reveal-btn:hover { opacity: 1; }

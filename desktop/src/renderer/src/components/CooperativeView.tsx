@@ -10,9 +10,13 @@ import type {
   RepoEligibility,
 } from '../types'
 import ActivityFeed from './ActivityFeed'
+import ClarifyPrompt from './ClarifyPrompt'
 import Composer from './Composer'
 import CooperativeSessionList from './CooperativeSessionList'
+import GeneratedFileChip from './GeneratedFileChip'
 import MessageBubble from './MessageBubble'
+
+const MAX_CLARIFY_ROUNDS = 3 // mirrors cooperative.ts's own default - not yet user-configurable
 
 interface Props {
   providers: ProviderStatus[]
@@ -181,12 +185,26 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
                       {r.diffStat && <span className="cooperative-diffstat">{r.diffStat.trim().split('\n').at(-1)}</span>}
                     </summary>
                     <MessageBubble message={toDisplayMessage(r, turn.timestamp, r.rawStderr.slice(0, 300))} />
+                    {r.generatedFiles.length > 0 && (
+                      <div className="cooperative-generated-files">
+                        {r.generatedFiles.map((f) => (
+                          <GeneratedFileChip key={f.path} file={f} />
+                        ))}
+                      </div>
+                    )}
                   </details>
                 ))}
                 {turn.judge ? (
                   <div className="cooperative-judge-answer">
                     <div className="cooperative-judge-label">🏆 Judge's pick — {turn.judge.provider}</div>
                     <MessageBubble message={toDisplayMessage(turn.judge, turn.timestamp)} />
+                    {turn.judge.generatedFiles.length > 0 && (
+                      <div className="cooperative-generated-files">
+                        {turn.judge.generatedFiles.map((f) => (
+                          <GeneratedFileChip key={f.path} file={f} />
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <div className="cooperative-judge-failure">{turn.judgeError ?? 'No synthesized answer for this run.'}</div>
@@ -196,14 +214,33 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
 
             {coop.runningTask && (
               <div className="cooperative-grid" style={{ gridTemplateColumns: `repeat(${runningParticipants.length + 1}, 1fr)` }}>
-                {runningParticipants.map((name) => (
-                  <div key={name} className="cooperative-grid-col">
-                    <div className="cooperative-grid-col-label">{name}</div>
-                    <ActivityFeed events={asChatEvents(coop.runningTask!.activity.filter((e) => e.provider === name))} elapsedSec={elapsedSec} />
-                  </div>
-                ))}
+                {runningParticipants.map((name) => {
+                  const pending = coop.runningTask!.pendingClarifications.get(name)
+                  return (
+                    <div key={name} className="cooperative-grid-col">
+                      <div className="cooperative-grid-col-label">{name}</div>
+                      {pending && (
+                        <ClarifyPrompt
+                          question={pending.question}
+                          round={pending.round}
+                          maxRounds={MAX_CLARIFY_ROUNDS}
+                          onAnswer={(answer) => coop.answerClarification(name, answer)}
+                        />
+                      )}
+                      <ActivityFeed events={asChatEvents(coop.runningTask!.activity.filter((e) => e.provider === name))} elapsedSec={elapsedSec} />
+                    </div>
+                  )
+                })}
                 <div className="cooperative-grid-col">
                   <div className="cooperative-grid-col-label">Judge</div>
+                  {coop.runningTask.pendingClarifications.get(judgeProvider) && (
+                    <ClarifyPrompt
+                      question={coop.runningTask.pendingClarifications.get(judgeProvider)!.question}
+                      round={coop.runningTask.pendingClarifications.get(judgeProvider)!.round}
+                      maxRounds={MAX_CLARIFY_ROUNDS}
+                      onAnswer={(answer) => coop.answerClarification(judgeProvider, answer)}
+                    />
+                  )}
                   <ActivityFeed
                     events={asChatEvents(coop.runningTask.activity.filter((e) => e.provider === judgeProvider && e.kind !== 'attempt'))}
                     elapsedSec={elapsedSec}
