@@ -17,6 +17,7 @@ import { useSessionList } from './hooks/useSessionList'
 import { useProjectList } from './hooks/useProjectList'
 import { useSkillList } from './hooks/useSkillList'
 import { useMcpServers } from './hooks/useMcpServers'
+import { anyLimited, limitStatus } from './lib/providerLimits'
 import type { ChatEvent, Message, ProjectData, Settings, SessionData, SkillData } from './types'
 
 const DEFAULT_ORDER = ['claude', 'codex', 'copilot', 'antigravity']
@@ -81,6 +82,20 @@ export default function App() {
   const elapsedSec = currentTask ? Math.round((now - currentTask.startedAt) / 1000) : 0
   const activeModel = modelOverrides.get(activeProvider) ?? settings.defaultModelByProvider[activeProvider] ?? ''
 
+  // "Usage limit full" only truly blocks sending once every provider this
+  // turn could actually reach - the active one plus its whole fallback chain -
+  // is limited; if even one candidate is clear, chat.ts's own fallback loop
+  // will still get a real answer, so blocking Send here would be wrong.
+  const sendCandidates = Array.from(new Set([activeProvider, ...fallbackOrder]))
+  const candidateLimits = sendCandidates.map((name) => {
+    const p = providerPanel.providers.find((pp) => pp.name === name)
+    return p ? limitStatus(p, now) : null
+  })
+  const allCandidatesLimited = sendCandidates.length > 0 && candidateLimits.every((l) => l !== null)
+  const soonestResume = candidateLimits.filter((l): l is NonNullable<typeof l> => l !== null).sort((a, b) => (a.needsReauth ? 1 : 0) - (b.needsReauth ? 1 : 0))[0]
+  const chatDisabledReason = allCandidatesLimited ? soonestResume?.label ?? 'All selected providers have reached their usage limit.' : null
+  const activeProviderLimit = limitStatus(providerPanel.providers.find((p) => p.name === activeProvider) ?? { cooldownUntil: null, lastFailureReason: null }, now)
+
   useEffect(() => {
     if (!window.aicli) return
     providerPanel.refreshProviders()
@@ -117,10 +132,10 @@ export default function App() {
   }, [session?.messages.length, currentTask?.activity.length])
 
   useEffect(() => {
-    if (runningTasks.size === 0) return
+    if (runningTasks.size === 0 && !anyLimited(providerPanel.providers)) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [runningTasks.size])
+  }, [runningTasks.size, providerPanel.providers])
 
   useEffect(() => {
     document.documentElement.dataset.theme = settings.theme === 'system' ? '' : settings.theme
@@ -199,6 +214,10 @@ export default function App() {
       setActiveProvider(answeredBy)
     }
     sessionList.refreshSessions()
+    // A failed attempt may have just set a new cooldown (or a retry may have
+    // just cleared one) - refresh so the sidebar badge and the composer's
+    // own gate reflect it immediately instead of waiting for a manual ↻.
+    providerPanel.refreshProviders()
   }
 
   async function handleCancel() {
@@ -287,6 +306,7 @@ export default function App() {
         onLogin={providerPanel.handleLogin}
         onOpenInstallUrl={(name) => window.aicli.openInstallUrl(name)}
         onCheckConnection={providerPanel.handleCheckConnection}
+        onClearCooldown={providerPanel.handleClearCooldown}
         checking={providerPanel.checking}
         onOpenSettings={() => setShowSettings(true)}
         onOpenMcpServers={() => setShowMcpServers(true)}
@@ -335,6 +355,7 @@ export default function App() {
           projectId={activeProjectId}
           defaultJudgeProvider={settings.defaultJudgeProvider}
           defaultModelByProvider={settings.defaultModelByProvider}
+          onRefreshProviders={providerPanel.refreshProviders}
         />
       ) : view === 'usage' ? (
         <UsageView />
@@ -345,12 +366,28 @@ export default function App() {
             <label>
               Talking to:{' '}
               <select value={activeProvider} onChange={(e) => setActiveProvider(e.target.value)}>
-                {providerNames(providerPanel.providers).map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
+                {providerPanel.providers.length
+                  ? providerPanel.providers.map((p) => {
+                      const limit = limitStatus(p, now)
+                      return (
+                        <option key={p.name} value={p.name}>
+                          {p.name}
+                          {limit ? ` (${limit.needsReauth ? 'needs re-login' : 'limited'})` : ''}
+                        </option>
+                      )
+                    })
+                  : DEFAULT_ORDER.map((name) => (
+                      <option key={name} value={name}>
+                        {name}
+                      </option>
+                    ))}
               </select>
+              {activeProviderLimit && (
+                <span className="cooldown-badge" title={activeProviderLimit.label}>
+                  {' '}
+                  ⏳
+                </span>
+              )}
             </label>
             <label>
               Model:{' '}
@@ -382,7 +419,8 @@ export default function App() {
             <div ref={messagesEndRef} />
           </div>
 
-          <Composer busy={busy} onSend={handleSend} onCancel={handleCancel} />
+          {chatDisabledReason && <div className="cooperative-disabled-hint">⏳ {chatDisabledReason}</div>}
+          <Composer busy={busy || !!chatDisabledReason} onSend={handleSend} onCancel={handleCancel} />
         </div>
       )}
     </div>

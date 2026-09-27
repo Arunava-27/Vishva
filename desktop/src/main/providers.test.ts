@@ -10,6 +10,7 @@ import {
   buildArgs,
   codexMcpArgs,
   displayOutput,
+  extractFailureDetail,
   runProvider,
   PROVIDERS,
   type Provider,
@@ -97,6 +98,35 @@ test('displayOutput - agy uses "response" instead (confirmed live, not just docs
 test('displayOutput - non-JSON or unrecognized shape falls back to the raw output', () => {
   assert.equal(displayOutput('plain text reply'), 'plain text reply')
   assert.equal(displayOutput(JSON.stringify({ something: 'else' })), JSON.stringify({ something: 'else' }))
+})
+
+test('extractFailureDetail: pulls the real error message out of a codex-style NDJSON stdout blob, not the stderr banner', () => {
+  // reproduces the real bug live-confirmed against the installed codex
+  // binary: a bad --model value fails with the actual reason on stdout as
+  // the last JSON line, while stderr only carries a generic startup notice
+  // that used to be the only thing shown to the user.
+  const stdout = [
+    '{"type":"thread.started","thread_id":"abc"}',
+    '{"type":"turn.started"}',
+    '{"type":"error","message":"{\\"type\\":\\"error\\",\\"status\\":400,\\"error\\":{\\"message\\":\\"The \'gpt-5\' model is not supported when using Codex with a ChatGPT account.\\"}}"}',
+    '{"type":"turn.failed","error":{"message":"The \'gpt-5\' model is not supported when using Codex with a ChatGPT account."}}',
+  ].join('\n')
+  assert.equal(
+    extractFailureDetail('Reading additional input from stdin...', stdout),
+    "The 'gpt-5' model is not supported when using Codex with a ChatGPT account.",
+  )
+})
+
+test('extractFailureDetail: falls back to stderr when stdout has no parseable error line', () => {
+  assert.equal(extractFailureDetail('real error text here', 'not json\nstill not json'), 'real error text here')
+})
+
+test('extractFailureDetail: falls back to a stdout tail when both stderr and structured stdout are empty', () => {
+  assert.equal(extractFailureDetail('', 'plain unstructured output'), 'plain unstructured output')
+})
+
+test('extractFailureDetail: falls back to "(no output)" when there is nothing at all', () => {
+  assert.equal(extractFailureDetail('', ''), '(no output)')
 })
 
 test('runProvider: outputFileFlag reads the clean reply from the file, not noisy stdout (codex-style)', async () => {

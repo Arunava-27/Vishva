@@ -36,7 +36,7 @@ import {
   type WorktreeHandle,
 } from './gitWorktree.ts'
 import type { McpServerConfig } from './mcpServers.ts'
-import { displayOutput, PROVIDERS, runProvider, type RunResult, type RunStatus } from './providers.ts'
+import { displayOutput, extractFailureDetail, PROVIDERS, runProvider, type RunResult, type RunStatus } from './providers.ts'
 import type { ToolCallSummary, UsageSummary } from './session.ts'
 import { recordUsage } from './usage.ts'
 
@@ -336,15 +336,10 @@ async function runOneProvider(
     // best-effort - never let attachment copying fail the whole attempt
   }
 
+  const failureDetail = status === 'SUCCESS' ? undefined : extractFailureDetail(result.rawStderr, result.output)
+
   if (!cancelled) {
-    onEvent(
-      makeEvent(
-        status === 'SUCCESS' ? 'success' : 'failure',
-        handle.provider,
-        status === 'SUCCESS' ? 'Responded.' : status,
-        status === 'SUCCESS' ? undefined : result.rawStderr.trim().slice(0, 300) || '(no output)',
-      ),
-    )
+    onEvent(makeEvent(status === 'SUCCESS' ? 'success' : 'failure', handle.provider, status === 'SUCCESS' ? 'Responded.' : status, failureDetail))
   }
 
   if (status === 'SUCCESS') {
@@ -360,7 +355,7 @@ async function runOneProvider(
     diffStat: diff.diffStat,
     diffPatch: diff.diffPatch,
     changedFiles: diff.changedFiles,
-    rawStderr: result.rawStderr,
+    rawStderr: failureDetail ?? result.rawStderr,
     generatedFiles,
   }
 }
@@ -438,8 +433,9 @@ async function runJudge(
     }
 
     if (judgeRun.status !== 'SUCCESS') {
-      onEvent(makeEvent('judge-failure', judgeProviderName, judgeRun.status))
-      return { judge: null, judgeError: `Judge (${judgeProviderName}) failed: ${judgeRun.status}` }
+      const detail = extractFailureDetail(judgeRun.rawStderr, judgeRun.output)
+      onEvent(makeEvent('judge-failure', judgeProviderName, judgeRun.status, detail))
+      return { judge: null, judgeError: `Judge (${judgeProviderName}) failed: ${judgeRun.status} - ${detail}` }
     }
 
     if (forcedFinal) break

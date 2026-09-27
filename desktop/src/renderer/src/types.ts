@@ -243,6 +243,7 @@ export interface AicliApi {
   installProvider: (name: string) => Promise<{ code: number | null }>
   loginProvider: (name: string) => Promise<{ code: number | null }>
   checkConnection: (name: string) => Promise<{ status: string }>
+  clearCooldown: (name: string) => Promise<void>
   cancelSetup: () => Promise<void>
   openInstallUrl: (name: string) => Promise<void>
   onSetupEvent: (callback: (chunk: string) => void) => () => void

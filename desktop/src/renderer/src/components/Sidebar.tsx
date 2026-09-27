@@ -27,6 +27,7 @@ interface Props {
   onLogin: (name: string) => void
   onOpenInstallUrl: (name: string) => void
   onCheckConnection: (name: string) => void
+  onClearCooldown: (name: string) => void
   checking: Record<string, string>
   onOpenSettings: () => void
   onOpenMcpServers: () => void
@@ -57,6 +58,7 @@ export default function Sidebar({
   onLogin,
   onOpenInstallUrl,
   onCheckConnection,
+  onClearCooldown,
   checking,
   onOpenSettings,
   onOpenMcpServers,
@@ -108,6 +110,7 @@ export default function Sidebar({
         onLogin={onLogin}
         onOpenInstallUrl={onOpenInstallUrl}
         onCheckConnection={onCheckConnection}
+        onClearCooldown={onClearCooldown}
         checking={checking}
       />
       <div className="sidebar-footer-row">

@@ -35,5 +35,11 @@ export function useProviderPanel(setSetupState: Dispatch<SetStateAction<SetupSta
     refreshProviders()
   }
 
-  return { providers, checking, refreshProviders, handleInstall, handleLogin, handleCheckConnection }
+  async function handleClearCooldown(name: string) {
+    if (!window.aicli) return
+    await window.aicli.clearCooldown(name)
+    refreshProviders()
+  }
+
+  return { providers, checking, refreshProviders, handleInstall, handleLogin, handleCheckConnection, handleClearCooldown }
 }

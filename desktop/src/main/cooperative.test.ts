@@ -6,9 +6,19 @@ import os from 'node:os'
 import path from 'node:path'
 import { extractClarifyingQuestion, runCooperative, type CooperativeEvent } from './cooperative.ts'
 import { setCooperativeAttachmentsDir } from './cooperativeAttachments.ts'
+import { setCooldownFile } from './cooldown.ts'
 import { PROVIDERS, type Provider } from './providers.ts'
 import { setWorktreesDir, WORKTREES_DIR } from './gitWorktree.ts'
 import { getUsage, setUsageFile } from './usage.ts'
+
+// Same reasoning as chat.test.ts's identical block: runCooperative() calls
+// cooldown.ts/usage.ts internally on every attempt, so every test here -
+// not just the ones that explicitly assert on usage - needs both stores
+// redirected before any test() runs, or fake provider names leak into the
+// user's real ~/.aicli/provider-cooldowns.json and usage.json.
+const testStoresDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-cooperative-test-stores-'))
+setCooldownFile(path.join(testStoresDir, 'cooldowns.json'))
+setUsageFile(path.join(testStoresDir, 'usage.json'))
 
 const NODE = process.execPath
 

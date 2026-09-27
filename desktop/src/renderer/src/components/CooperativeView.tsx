@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useCooperative } from '../hooks/useCooperative'
+import { anyLimited, limitStatus } from '../lib/providerLimits'
 import type {
   ChatEvent,
   CooperativeEvent,
@@ -25,10 +26,16 @@ interface Props {
   projectId: string | null
   defaultJudgeProvider: string
   defaultModelByProvider: Record<string, string>
+  onRefreshProviders: () => void
 }
 
+// Installed+logged-in is still the hard requirement for being offered at
+// all; a currently-limited provider stays in this list (rendered disabled,
+// with its countdown) rather than silently vanishing - the whole point of
+// "live usage limits" is that the user can SEE why something isn't
+// selectable, not just find it missing.
 function eligibleProviders(providers: ProviderStatus[]): ProviderStatus[] {
-  return providers.filter((p) => p.installed && p.loggedIn === true && (p.cooldownUntil === null || p.cooldownUntil < Date.now()))
+  return providers.filter((p) => p.installed && p.loggedIn === true)
 }
 
 // ActivityFeed (reused unmodified) types its `events` prop as ChatEvent[],
@@ -57,7 +64,14 @@ function toDisplayMessage(
   }
 }
 
-export default function CooperativeView({ providers, cwd, projectId, defaultJudgeProvider, defaultModelByProvider }: Props) {
+export default function CooperativeView({
+  providers,
+  cwd,
+  projectId,
+  defaultJudgeProvider,
+  defaultModelByProvider,
+  onRefreshProviders,
+}: Props) {
   const coop = useCooperative()
   const eligible = useMemo(() => eligibleProviders(providers), [providers])
   const [deselected, setDeselected] = useState<Set<string>>(new Set())
@@ -89,16 +103,21 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
   }, [eligible])
 
   useEffect(() => {
-    if (!coop.runningTask) return
+    if (!coop.runningTask && !anyLimited(eligible)) return
     const id = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(id)
-  }, [coop.runningTask])
+  }, [coop.runningTask, eligible])
 
-  const participants = eligible.map((p) => p.name).filter((n) => !deselected.has(n))
+  const limitByProvider = new Map(eligible.map((p) => [p.name, limitStatus(p, now)]))
+  // A provider that just became limited (e.g. it failed mid-run and got
+  // deselected automatically) never counts as a participant even if it was
+  // toggled on earlier - live, not a one-time filter at selection time.
+  const participants = eligible.map((p) => p.name).filter((n) => !deselected.has(n) && !limitByProvider.get(n))
   const busy = !!coop.runningTask
   const elapsedSec = coop.runningTask ? Math.round((now - coop.runningTask.startedAt) / 1000) : 0
 
   function toggleParticipant(name: string) {
+    if (limitByProvider.get(name)) return
     setDeselected((prev) => {
       const next = new Set(prev)
       if (next.has(name)) next.delete(name)
@@ -116,8 +135,13 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
       if (model) resolvedModelByProvider[name] = model
     }
     await coop.send(text, attachments, participants, judgeProvider, cwd, projectId, resolvedModelByProvider)
+    // A participant or the judge may have just hit its usage limit (or one
+    // that was limited before this run may have recovered) - refresh so chip
+    // states and the judge select reflect it right away.
+    onRefreshProviders()
   }
 
+  const judgeLimit = limitByProvider.get(judgeProvider) ?? null
   const disabledReason =
     repoEligibility === null
       ? null
@@ -125,7 +149,9 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
         ? 'Cooperative mode needs a git repository with at least one commit — run `git init && git commit` in this project first.'
         : participants.length === 0
           ? 'No installed & logged-in providers selected - pick at least one below.'
-          : null
+          : judgeLimit
+            ? `Judge (${judgeProvider}) has reached its usage limit — ${judgeLimit.label}.`
+            : null
 
   const latestTurn = coop.session?.turns.at(-1)
 
@@ -154,25 +180,32 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
           <div className="cooperative-picker">
             <div className="cooperative-chip-row">
               {eligible.length === 0 && <span className="cooperative-hint">No installed & logged-in providers found.</span>}
-              {eligible.map((p) => (
-                <div key={p.name} className="cooperative-chip-group">
-                  <button
-                    className={'cooperative-chip' + (deselected.has(p.name) ? ' off' : '')}
-                    onClick={() => toggleParticipant(p.name)}
-                    disabled={busy}
-                  >
-                    {p.name}
-                  </button>
-                  {!deselected.has(p.name) && (
-                    <ModelSelect
-                      models={p.models}
-                      value={modelByProvider.get(p.name) ?? defaultModelByProvider[p.name] ?? ''}
-                      onChange={(m) => setModelByProvider((prev) => new Map(prev).set(p.name, m))}
-                      disabled={busy}
-                    />
-                  )}
-                </div>
-              ))}
+              {eligible.map((p) => {
+                const limit = limitByProvider.get(p.name)
+                const off = deselected.has(p.name) || !!limit
+                return (
+                  <div key={p.name} className="cooperative-chip-group">
+                    <button
+                      className={'cooperative-chip' + (off ? ' off' : '')}
+                      onClick={() => toggleParticipant(p.name)}
+                      disabled={busy || !!limit}
+                      title={limit?.label}
+                    >
+                      {p.name}
+                      {limit && ' ⏳'}
+                    </button>
+                    {!off && (
+                      <ModelSelect
+                        models={p.models}
+                        value={modelByProvider.get(p.name) ?? defaultModelByProvider[p.name] ?? ''}
+                        onChange={(m) => setModelByProvider((prev) => new Map(prev).set(p.name, m))}
+                        disabled={busy}
+                      />
+                    )}
+                    {limit && <span className="cooperative-limit-label">{limit.label}</span>}
+                  </div>
+                )
+              })}
             </div>
             <label className="cooperative-judge-select">
               Judge:
@@ -180,6 +213,7 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
                 {eligible.map((p) => (
                   <option key={p.name} value={p.name}>
                     {p.name}
+                    {limitByProvider.get(p.name) ? ` (${limitByProvider.get(p.name)!.needsReauth ? 'needs re-login' : 'limited'})` : ''}
                   </option>
                 ))}
               </select>

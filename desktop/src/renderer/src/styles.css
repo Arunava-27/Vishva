@@ -159,7 +159,7 @@ body {
   text-align: left;
 }
 
-.cooldown-badge { cursor: help; }
+.cooldown-badge { cursor: help; color: var(--danger); font-size: 11px; }
 
 .provider-row {
   font-size: 12px;
@@ -873,6 +873,7 @@ body {
 
 .cooperative-chip-group { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; }
 .cooperative-chip-group select { font-size: 11px; padding: 2px 4px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg); color: var(--text-dim); }
+.cooperative-limit-label { font-size: 10px; color: var(--danger); max-width: 140px; line-height: 1.3; }
 
 .settings-model-rows { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
 .settings-model-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }

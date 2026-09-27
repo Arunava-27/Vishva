@@ -74,6 +74,7 @@ const api = {
   installProvider: (name: string) => ipcRenderer.invoke('provider:install', name),
   loginProvider: (name: string) => ipcRenderer.invoke('provider:login', name),
   checkConnection: (name: string) => ipcRenderer.invoke('provider:checkConnection', name),
+  clearCooldown: (name: string) => ipcRenderer.invoke('provider:clearCooldown', name),
   cancelSetup: () => ipcRenderer.invoke('provider:cancelSetup'),
   openInstallUrl: (name: string) => ipcRenderer.invoke('provider:openInstallUrl', name),
   onSetupEvent: (callback: (chunk: string) => void) => {

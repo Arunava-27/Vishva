@@ -4,9 +4,23 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { sendMessage } from './chat.ts'
+import { setCooldownFile } from './cooldown.ts'
 import { PROVIDERS, type Provider } from './providers.ts'
 import { Session, setSessionsDir } from './session.ts'
 import { getUsage, setUsageFile } from './usage.ts'
+
+// Every test below runs real success/failure attempts through sendMessage(),
+// which internally calls cooldown.ts's recordFailure/clearCooldown and
+// usage.ts's recordUsage on every attempt - not just the tests that
+// explicitly care about usage/cooldown behavior. Redirecting both stores
+// once, at module load, before any test() runs, is what keeps every test in
+// this file from writing real provider names into the user's actual
+// ~/.aicli/provider-cooldowns.json and ~/.aicli/usage.json (found the hard
+// way: a prior test run had left fake provider names like "chatty" sitting
+// in the real usage store).
+const testStoresDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-chat-test-stores-'))
+setCooldownFile(path.join(testStoresDir, 'cooldowns.json'))
+setUsageFile(path.join(testStoresDir, 'usage.json'))
 
 function withTempSessions<T>(fn: () => Promise<T>): () => Promise<T> {
   return async () => {

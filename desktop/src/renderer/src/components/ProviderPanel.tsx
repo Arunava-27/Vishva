@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import { anyLimited, limitStatus } from '../lib/providerLimits'
 import type { ProviderStatus } from '../types'
 
 interface Props {
@@ -7,14 +9,8 @@ interface Props {
   onLogin: (name: string) => void
   onOpenInstallUrl: (name: string) => void
   onCheckConnection: (name: string) => void
+  onClearCooldown: (name: string) => void
   checking: Record<string, string>
-}
-
-function cooldownLabel(p: ProviderStatus): string | null {
-  if (p.cooldownUntil === null) return null
-  if (p.cooldownUntil >= Number.MAX_SAFE_INTEGER) return `needs re-login (${p.lastFailureReason})`
-  const mins = Math.ceil((p.cooldownUntil - Date.now()) / 60_000)
-  return `cooling down, retry in ${mins}m (${p.lastFailureReason})`
 }
 
 export default function ProviderPanel({
@@ -24,8 +20,19 @@ export default function ProviderPanel({
   onLogin,
   onOpenInstallUrl,
   onCheckConnection,
+  onClearCooldown,
   checking,
 }: Props) {
+  const [now, setNow] = useState(Date.now())
+
+  // Only ticks while something is actually counting down - a provider with
+  // no recorded cooldown at all costs nothing here.
+  useEffect(() => {
+    if (!anyLimited(providers)) return
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [providers])
+
   return (
     <div style={{ marginTop: 'auto' }}>
       <h2>
@@ -35,14 +42,29 @@ export default function ProviderPanel({
         </span>
       </h2>
       {providers.map((p) => {
-        const cooldown = cooldownLabel(p)
+        const limit = limitStatus(p, now)
         return (
           <div key={p.name} className={'provider-row' + (p.installed ? ' installed' : '')} title={p.installHint}>
             <span className="provider-name">
               <span className="dot">{p.installed ? '●' : '○'}</span>
               {p.name}
               {p.installed && !p.verified ? ' (unverified)' : ''}
-              {cooldown && <span className="cooldown-badge" title={cooldown}> ⏳</span>}
+              {limit && (
+                <span className="cooldown-badge" title={limit.label}>
+                  {' '}
+                  ⏳ {limit.label}
+                  <button
+                    className="link-btn"
+                    title="Dismiss this cooldown - use if you believe it's wrong (e.g. already recovered)"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onClearCooldown(p.name)
+                    }}
+                  >
+                    clear
+                  </button>
+                </span>
+              )}
             </span>
             {!p.installed && p.canAutoInstall && (
               <button className="link-btn" onClick={() => onInstall(p.name)}>

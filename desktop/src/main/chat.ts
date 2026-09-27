@@ -13,7 +13,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { clearCooldown, getCooldownInfo, INDEFINITE_COOLDOWN, isOnCooldown, recordFailure } from './cooldown.ts'
 import type { McpServerConfig } from './mcpServers.ts'
-import { displayOutput, PROVIDERS, runProvider, type ProviderToolOrUsageEvent } from './providers.ts'
+import { displayOutput, extractFailureDetail, PROVIDERS, runProvider, type ProviderToolOrUsageEvent } from './providers.ts'
 import type { Session, ToolCallSummary, UsageSummary } from './session.ts'
 import { recordUsage } from './usage.ts'
 
@@ -222,7 +222,7 @@ export async function sendMessage(
       return name
     }
 
-    const detail = result.rawStderr.trim().slice(0, 300) || '(no output)'
+    const detail = extractFailureDetail(result.rawStderr, result.output)
     onEvent(makeEvent('failure', name, result.status, detail))
     if (i + 1 < order.length) {
       onEvent(makeEvent('handoff', name, 'Falling back to the next provider...'))

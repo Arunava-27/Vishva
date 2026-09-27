@@ -552,8 +552,20 @@ export const PROVIDERS: Record<string, Provider> = {
     installHint: 'winget install Anthropic.ClaudeCode  (or: npm install -g @anthropic-ai/claude-code)',
     // stream-json confirmed live: one JSON object per line, structured
     // tool_use blocks and real usage/cost data - see parseClaudeLine.
-    printArgs: ['-p', '{prompt}', '--session-id', '{session_id}', '--output-format', 'stream-json', '--verbose'],
-    resumeArgs: ['-p', '{prompt}', '--resume', '{session_id}', '--output-format', 'stream-json', '--verbose'],
+    //
+    // --dangerously-skip-permissions CONFIRMED necessary live: without it,
+    // claude's own default permission gate silently refuses every Write/Edit
+    // tool call in this headless, unattended `-p` invocation (there's no
+    // human to answer the prompt) while still exiting 0 with is_error:false
+    // - the JSON response's own permission_denials array and reply text
+    // ("The write requires your approval...") are the only sign anything
+    // went wrong, so the app was reporting SUCCESS on turns that never
+    // actually touched a file. The other 3 providers already carry an
+    // equivalent flag (codex: --dangerously-bypass-approvals-and-sandbox,
+    // copilot: --allow-all-tools, antigravity: --dangerously-skip-permissions)
+    // - this was the one gap.
+    printArgs: ['-p', '{prompt}', '--session-id', '{session_id}', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'],
+    resumeArgs: ['-p', '{prompt}', '--resume', '{session_id}', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'],
     // no local-file-attachment flag; grant folder access and let its own
     // Read tool (which handles images too) open the path referenced in the prompt.
     addDirFlag: '--add-dir',
@@ -564,12 +576,15 @@ export const PROVIDERS: Record<string, Provider> = {
     // confirmed live via `claude --help`: repeatable, points at any JSON file - safe to use a temp file we own.
     mcpConfigFlag: '--mcp-config',
     parseStreamLine: parseClaudeLine,
-    // HIGH confidence: --model and these short aliases (sonnet/opus/haiku)
-    // are documented and stable in Anthropic's own CLI docs. Full dated
-    // model IDs are also accepted but deliberately left out of this curated
-    // list since they go stale fast - use "Custom" in the UI for those.
+    // CONFIRMED live via `claude --help`'s own --model description on the
+    // installed binary: "Provide an alias for the latest model (e.g.
+    // 'fable', 'opus', or 'sonnet')" - 'haiku' is NOT listed there (an
+    // earlier, wrong guess in this list - selecting it errors against this
+    // CLI version). Full dated model IDs are also accepted but deliberately
+    // left out of this curated list since they go stale fast - use "Custom"
+    // in the UI for those.
     modelFlag: '--model',
-    models: ['sonnet', 'opus', 'haiku'],
+    models: ['sonnet', 'opus', 'fable'],
   },
   codex: {
     name: 'codex',
@@ -607,12 +622,18 @@ export const PROVIDERS: Record<string, Provider> = {
     // confirmed live via `codex --help`: no file-flag, only repeatable `-c mcp_servers.<name>.*=` overrides.
     mcpServerArgsFn: codexMcpArgs,
     parseStreamLine: parseCodexLine,
-    // LOW confidence: NOT verified live (matches this provider's other
-    // best-effort framing above - codex isn't installed on this machine).
-    // OpenAI's model naming for the Codex CLI shifts independently of this
-    // codebase - treat this as a starting point to fix once actually tested.
+    // CONFIRMED live (and the hard way): tried against the installed binary,
+    // 'gpt-5' AND 'gpt-5-codex' both fail with a real 400 - "The '<model>'
+    // model is not supported when using Codex with a ChatGPT account." -
+    // ChatGPT-plan logins (the only auth this codebase automates, see
+    // loginCommand above) only work with the account's own default model,
+    // which means omitting --model entirely (confirmed working live). An
+    // API-key login might accept explicit IDs like these, but this app has
+    // no way to know which auth mode is active, so no curated list here is
+    // safe to offer as a default - "(provider default)"/omitting --model is
+    // the one value confirmed to work, "Custom" covers API-key accounts.
     modelFlag: '--model',
-    models: ['gpt-5', 'o3', 'o4-mini'],
+    models: [],
   },
   copilot: {
     name: 'copilot',
@@ -633,12 +654,15 @@ export const PROVIDERS: Record<string, Provider> = {
     // confirmed live via `copilot --help`: session-only, augments (doesn't persist into) ~/.copilot/mcp-config.json.
     mcpConfigFlag: '--additional-mcp-config',
     parseStreamLine: parseCopilotLine,
-    // LOW confidence: copilot's OTHER flags above (--session-id,
-    // --allow-all-tools, --output-format json) ARE live-verified, but
-    // --model and its accepted value strings have not been - do not treat
-    // this list as confirmed the way the rest of this config is.
+    // PARTIAL confidence: `copilot --help` confirms --model takes a model
+    // id, offers 'auto' ("let Copilot pick automatically") as the one
+    // explicitly documented safe value, and its own usage example uses
+    // 'gpt-5.4' (not the bare 'gpt-5' this list previously guessed, which
+    // errors) - but there is no `copilot models` listing subcommand to
+    // confirm the rest against, so the claude-* entries below are still
+    // unverified guesses.
     modelFlag: '--model',
-    models: ['gpt-5', 'claude-sonnet-4.5', 'claude-opus-4.1'],
+    models: ['auto', 'gpt-5.4', 'claude-sonnet-4.5', 'claude-opus-4.1'],
   },
   antigravity: {
     name: 'antigravity',
@@ -672,12 +696,28 @@ export const PROVIDERS: Record<string, Provider> = {
     // interactive TUI). First-time auth happens via running `agy`
     // interactively once yourself; there's nothing here to automate.
     installUrl: 'https://antigravity.google/docs/getting-started?tab=cli',
-    // LOWEST confidence of the four - a guess. Nothing about antigravity's
-    // model-selection flag has been confirmed live (unlike its output-format/
-    // permissions flags above, which ARE live-verified) - most likely to
-    // need correction once tested against the real binary.
+    // CONFIRMED live via `agy models` (a real listing subcommand, no cost -
+    // doesn't spend a request the way probing --model with a real prompt
+    // would) on the installed binary - this replaces an earlier guess
+    // ('gemini-2.5-pro'/'gemini-2.5-flash') that doesn't exist in this
+    // account's model list at all and errored whenever selected.
     modelFlag: '--model',
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
+    models: [
+      'gemini-3.1-pro-high',
+      'gemini-3.1-pro-low',
+      'claude-sonnet-4-6',
+      'claude-opus-4-6-thinking',
+      'gemini-3.8-flash-high',
+      'gemini-3.8-flash-medium',
+      'gemini-3.8-flash-low',
+      'gemini-3.7-flash-high',
+      'gemini-3.7-flash-medium',
+      'gemini-3.7-flash-low',
+      'gemini-3.6-flash-high',
+      'gemini-3.6-flash-medium',
+      'gemini-3.6-flash-low',
+      'gpt-oss-120b-medium',
+    ],
   },
 }
 
@@ -685,6 +725,37 @@ export const PROVIDERS: Record<string, Provider> = {
 // actual reply: claude/copilot use "result", agy uses "response" (confirmed
 // live against the real binaries) - checked in that order.
 const REPLY_FIELDS = ['result', 'response']
+
+/** Picks the most useful short diagnostic text for a failed attempt.
+ * Confirmed live against codex: its real failure reason ({"type":"turn.
+ * failed","error":{"message":"The 'gpt-5' model is not supported..."}}) is
+ * an NDJSON line on STDOUT, while stderr just carries a generic startup
+ * notice ("Reading additional input from stdin...") that drowned out the
+ * actual reason once the old code only ever showed rawStderr, truncated.
+ * Scans stdout bottom-up (the failure is normally the last line) for a JSON
+ * object carrying an explicit error/message field before falling back to
+ * stderr, then to a plain stdout tail. */
+export function extractFailureDetail(rawStderr: string, output: string): string {
+  const lines = output.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim()
+    if (!trimmed) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(trimmed)
+    } catch {
+      continue
+    }
+    if (typeof parsed !== 'object' || parsed === null) continue
+    const p = parsed as Record<string, unknown>
+    const errObj = p.error && typeof p.error === 'object' ? (p.error as Record<string, unknown>) : null
+    const msg = (errObj?.message ?? p.message) as unknown
+    if (typeof msg === 'string' && msg.trim()) return msg.trim().slice(0, 300)
+  }
+  const stderrPart = rawStderr.trim()
+  if (stderrPart) return stderrPart.slice(0, 300)
+  return output.trim().slice(0, 300) || '(no output)'
+}
 
 export function displayOutput(output: string): string {
   try {

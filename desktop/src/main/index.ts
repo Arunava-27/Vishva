@@ -281,6 +281,15 @@ ipcMain.handle('provider:checkConnection', async (_e: IpcMainInvokeEvent, name: 
   return { status: result.status }
 })
 
+// Manual override for a cooldown the user believes is wrong (a real usage
+// limit doesn't always mean "blocked for exactly COOLDOWN_MS" - a transient
+// 429 can recover in seconds, well before our own fixed 15-minute guess
+// expires) - there was previously no way to dismiss a bad signal short of
+// hand-editing provider-cooldowns.json.
+ipcMain.handle('provider:clearCooldown', (_e: IpcMainInvokeEvent, name: string): void => {
+  clearCooldown(name)
+})
+
 ipcMain.handle('sessions:list', (): SessionData[] => {
   return Session.listAll().map((s) => s.data)
 })
