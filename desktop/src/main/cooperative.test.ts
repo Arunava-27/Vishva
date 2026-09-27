@@ -8,6 +8,7 @@ import { extractClarifyingQuestion, runCooperative, type CooperativeEvent } from
 import { setCooperativeAttachmentsDir } from './cooperativeAttachments.ts'
 import { PROVIDERS, type Provider } from './providers.ts'
 import { setWorktreesDir, WORKTREES_DIR } from './gitWorktree.ts'
+import { getUsage, setUsageFile } from './usage.ts'
 
 const NODE = process.execPath
 
@@ -86,6 +87,14 @@ process.stdout.write('generated a file: ${filename}');
 process.exit(0);
 `
   return { name, binary: NODE, installHint: 'n/a', printArgs: ['-e', script, '{prompt}'], verified: true }
+}
+
+/** A fake provider (with a real modelFlag) that scans its own argv for
+ * --model and echoes back what it received - proves the model choice
+ * actually reached the CLI invocation. */
+function modelAwareProvider(name: string): Provider {
+  const script = "const a=process.argv.slice(1);const i=a.indexOf('--model');process.stdout.write('model=' + (i!==-1?a[i+1]:'none'))"
+  return { name, binary: NODE, installHint: 'n/a', printArgs: ['-e', script, '{prompt}'], modelFlag: '--model', verified: true }
 }
 
 function withRepo(fn: (repo: string) => Promise<void>): () => Promise<void> {
@@ -458,6 +467,71 @@ test(
       assert.equal(result.judge!.generatedFiles[0].path, path.join(repo, 'summary.xlsx'))
     } finally {
       unregister()
+    }
+  }),
+)
+
+test(
+  'runCooperative: modelByProvider threads the right model into each fan-out provider AND the judge, and records usage per provider+model',
+  withRepo(async (repo) => {
+    initRepo(repo)
+    const tmpUsageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-coop-usage-'))
+    setUsageFile(path.join(tmpUsageDir, 'usage.json'))
+    const unregister = registerProviders(modelAwareProvider('alpha'), modelAwareProvider('judge'))
+    try {
+      const result = await runCooperative(repo, 'sess-model', 'do the thing', ['alpha'], 'judge', {
+        modelByProvider: { alpha: 'opus', judge: 'sonnet' },
+      })
+      const alpha = result.providerResults.find((r) => r.provider === 'alpha')!
+      assert.equal(alpha.status, 'SUCCESS')
+      assert.equal(alpha.reply, 'model=opus')
+      assert.ok(result.judge)
+      assert.equal(result.judge!.reply, 'model=sonnet')
+
+      const usage = getUsage()
+      assert.equal(usage.alpha.opus.requestCount, 1)
+      assert.equal(usage.judge.sonnet.requestCount, 1)
+    } finally {
+      unregister()
+      fs.rmSync(tmpUsageDir, { recursive: true, force: true })
+    }
+  }),
+)
+
+test(
+  'runCooperative: usage is recorded under the "default" model key when no model was selected',
+  withRepo(async (repo) => {
+    initRepo(repo)
+    const tmpUsageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-coop-usage2-'))
+    setUsageFile(path.join(tmpUsageDir, 'usage.json'))
+    const unregister = registerProviders(editingProvider('alpha', 'ALPHA_MARKER'), editingProvider('judge', 'JUDGE_MARKER'))
+    try {
+      await runCooperative(repo, 'sess-model-default', 'do the thing', ['alpha'], 'judge', {})
+      const usage = getUsage()
+      assert.equal(usage.alpha.default.requestCount, 1)
+      assert.equal(usage.judge.default.requestCount, 1)
+    } finally {
+      unregister()
+      fs.rmSync(tmpUsageDir, { recursive: true, force: true })
+    }
+  }),
+)
+
+test(
+  'runCooperative: a failed provider does NOT get its usage recorded',
+  withRepo(async (repo) => {
+    initRepo(repo)
+    const tmpUsageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-coop-usage3-'))
+    setUsageFile(path.join(tmpUsageDir, 'usage.json'))
+    const unregister = registerProviders(editingProvider('alpha', 'ALPHA_MARKER', 0, 1))
+    try {
+      const result = await runCooperative(repo, 'sess-model-fail', 'do the thing', ['alpha'], 'alpha', {})
+      assert.notEqual(result.providerResults[0].status, 'SUCCESS')
+      const usage = getUsage()
+      assert.equal(usage.alpha, undefined)
+    } finally {
+      unregister()
+      fs.rmSync(tmpUsageDir, { recursive: true, force: true })
     }
   }),
 )

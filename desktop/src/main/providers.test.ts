@@ -66,6 +66,26 @@ test('buildArgs - one attachment/add-dir pair per file', () => {
   assert.equal(args.filter((a) => a === '--attachment').length, 2)
 })
 
+test('buildArgs - model flag appended when both modelFlag and model are set', () => {
+  const args = buildArgs(['-p', '{prompt}'], 'hello', 'sid-1', [], null, null, null, '--model', 'opus')
+  assert.deepEqual(args, ['-p', 'hello', '--model', 'opus'])
+})
+
+test('buildArgs - model flag omitted when model is missing', () => {
+  const args = buildArgs(['-p', '{prompt}'], 'hello', 'sid-1', [], null, null, null, '--model', null)
+  assert.deepEqual(args, ['-p', 'hello'])
+})
+
+test('buildArgs - model flag omitted when the provider has no modelFlag', () => {
+  const args = buildArgs(['-p', '{prompt}'], 'hello', 'sid-1', [], null, null, null, null, 'opus')
+  assert.deepEqual(args, ['-p', 'hello'])
+})
+
+test('buildArgs - model flag combines correctly with cwd/add-dir', () => {
+  const args = buildArgs(['-p', '{prompt}'], 'hello', 'sid-1', [], null, '--add-dir', 'D:\\proj', '--model', 'sonnet')
+  assert.deepEqual(args, ['-p', 'hello', '--model', 'sonnet', '--add-dir', 'D:\\proj'])
+})
+
 test('displayOutput - claude/copilot use "result"', () => {
   assert.equal(displayOutput(JSON.stringify({ result: 'the answer' })), 'the answer')
 })

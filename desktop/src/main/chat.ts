@@ -15,6 +15,7 @@ import { clearCooldown, getCooldownInfo, INDEFINITE_COOLDOWN, isOnCooldown, reco
 import type { McpServerConfig } from './mcpServers.ts'
 import { displayOutput, PROVIDERS, runProvider, type ProviderToolOrUsageEvent } from './providers.ts'
 import type { Session, ToolCallSummary, UsageSummary } from './session.ts'
+import { recordUsage } from './usage.ts'
 
 export type ChatEventKind = 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted' | 'tool' | 'usage'
 
@@ -97,6 +98,9 @@ export interface SendMessageOptions {
    * it from that first message rather than needing to be re-injected. */
   projectInstructions?: string
   mcpServers?: McpServerConfig[]
+  /** Keyed by provider name, not a single flat value - a fallback chain can
+   * span multiple providers, each needing its own model choice. */
+  modelByProvider?: Record<string, string>
 }
 
 export async function sendMessage(
@@ -170,6 +174,7 @@ export async function sendMessage(
       mcpServers: opts.mcpServers,
       onProcess: opts.onProcess,
       cwd: session.data.cwd,
+      model: opts.modelByProvider?.[name],
       onStreamEvent: (evt) => {
         const ce = streamEventToChatEvent(name, evt)
         onEvent(ce)
@@ -212,6 +217,7 @@ export async function sendMessage(
     if (result.status === 'SUCCESS') {
       const reply = displayOutput(result.output)
       session.addMessage('assistant', reply, name, attemptToolCalls, attemptUsage)
+      recordUsage(name, opts.modelByProvider?.[name] ?? 'default', attemptUsage)
       onEvent(makeEvent('success', name, 'Responded.'))
       return name
     }

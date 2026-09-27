@@ -31,6 +31,7 @@ interface Props {
   onOpenSettings: () => void
   onOpenMcpServers: () => void
   onOpenCooperative: () => void
+  onOpenUsage: () => void
 }
 
 export default function Sidebar({
@@ -60,6 +61,7 @@ export default function Sidebar({
   onOpenSettings,
   onOpenMcpServers,
   onOpenCooperative,
+  onOpenUsage,
 }: Props) {
   // A session whose projectId no longer resolves to a real project (deleted,
   // or from before projects existed) shows up here instead of vanishing.
@@ -73,6 +75,9 @@ export default function Sidebar({
       </button>
       <button className="new-chat-btn cooperative-nav-btn" onClick={onOpenCooperative}>
         🤝 Cooperative
+      </button>
+      <button className="new-chat-btn cooperative-nav-btn" onClick={onOpenUsage}>
+        📊 Usage
       </button>
       <ProjectList
         projects={projects}

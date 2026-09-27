@@ -85,8 +85,11 @@ export function buildArgs(
   attachmentFlag: string | null = null,
   addDirFlag: string | null = null,
   cwd: string | null = null,
+  modelFlag: string | null = null,
+  model: string | null = null,
 ): string[] {
   const args = formatTemplate(template, prompt, sessionId)
+  if (model && modelFlag) args.push(modelFlag, model)
   // grants the CLI's own tools (Read/Glob/etc) access to the project's
   // working directory even when the user hasn't attached any specific file -
   // previously --add-dir was only ever emitted per-attachment, so a chat
@@ -182,6 +185,17 @@ export interface Provider {
   attachmentFlag?: string
   addDirFlag?: string
   verified: boolean
+  /** Known model identifiers/aliases for this provider's model-selection
+   * flag, shown as dropdown options in the UI (plus an always-available
+   * "Custom" free-text escape hatch there, since these lists are necessarily
+   * best-effort and may go stale as each CLI's accepted values change - see
+   * the confidence-level comment on each entry in PROVIDERS below). Omitted
+   * or empty means no known model-selection flag for this provider. */
+  models?: string[]
+  /** The CLI flag that takes a model identifier, e.g. '--model'. Combined
+   * with RunOptions.model at call time via buildArgs(): [modelFlag, model]
+   * appended to args, mirroring how addDirFlag is already applied. */
+  modelFlag?: string
   /** Runnable from the app's "Install" button. Omitted (antigravity) when
    * there's no package-manager install - installUrl is shown instead. */
   installCommand?: Command
@@ -409,6 +423,10 @@ export interface RunOptions {
    * internally and surfaces through RunResult.output as always - not
    * forwarded here. */
   onStreamEvent?: (evt: ProviderToolOrUsageEvent) => void
+  /** Passed to the provider's own modelFlag, if it has one - omitted
+   * entirely (no flag emitted) when either this or the provider's modelFlag
+   * is unset. */
+  model?: string
 }
 
 /**
@@ -433,6 +451,7 @@ export async function runProvider(
   const args = buildArgs(
     template, prompt, sessionId,
     opts.attachments ?? [], provider.attachmentFlag ?? null, provider.addDirFlag ?? null, opts.cwd ?? null,
+    provider.modelFlag ?? null, opts.model ?? null,
   )
 
   const outputFile = provider.outputFileFlag ? path.join(os.tmpdir(), `aicli-output-${randomUUID()}.txt`) : null
@@ -545,6 +564,12 @@ export const PROVIDERS: Record<string, Provider> = {
     // confirmed live via `claude --help`: repeatable, points at any JSON file - safe to use a temp file we own.
     mcpConfigFlag: '--mcp-config',
     parseStreamLine: parseClaudeLine,
+    // HIGH confidence: --model and these short aliases (sonnet/opus/haiku)
+    // are documented and stable in Anthropic's own CLI docs. Full dated
+    // model IDs are also accepted but deliberately left out of this curated
+    // list since they go stale fast - use "Custom" in the UI for those.
+    modelFlag: '--model',
+    models: ['sonnet', 'opus', 'haiku'],
   },
   codex: {
     name: 'codex',
@@ -582,6 +607,12 @@ export const PROVIDERS: Record<string, Provider> = {
     // confirmed live via `codex --help`: no file-flag, only repeatable `-c mcp_servers.<name>.*=` overrides.
     mcpServerArgsFn: codexMcpArgs,
     parseStreamLine: parseCodexLine,
+    // LOW confidence: NOT verified live (matches this provider's other
+    // best-effort framing above - codex isn't installed on this machine).
+    // OpenAI's model naming for the Codex CLI shifts independently of this
+    // codebase - treat this as a starting point to fix once actually tested.
+    modelFlag: '--model',
+    models: ['gpt-5', 'o3', 'o4-mini'],
   },
   copilot: {
     name: 'copilot',
@@ -602,6 +633,12 @@ export const PROVIDERS: Record<string, Provider> = {
     // confirmed live via `copilot --help`: session-only, augments (doesn't persist into) ~/.copilot/mcp-config.json.
     mcpConfigFlag: '--additional-mcp-config',
     parseStreamLine: parseCopilotLine,
+    // LOW confidence: copilot's OTHER flags above (--session-id,
+    // --allow-all-tools, --output-format json) ARE live-verified, but
+    // --model and its accepted value strings have not been - do not treat
+    // this list as confirmed the way the rest of this config is.
+    modelFlag: '--model',
+    models: ['gpt-5', 'claude-sonnet-4.5', 'claude-opus-4.1'],
   },
   antigravity: {
     name: 'antigravity',
@@ -635,6 +672,12 @@ export const PROVIDERS: Record<string, Provider> = {
     // interactive TUI). First-time auth happens via running `agy`
     // interactively once yourself; there's nothing here to automate.
     installUrl: 'https://antigravity.google/docs/getting-started?tab=cli',
+    // LOWEST confidence of the four - a guess. Nothing about antigravity's
+    // model-selection flag has been confirmed live (unlike its output-format/
+    // permissions flags above, which ARE live-verified) - most likely to
+    // need correction once tested against the real binary.
+    modelFlag: '--model',
+    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
   },
 }
 

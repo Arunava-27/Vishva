@@ -13,6 +13,12 @@ export interface Settings {
   /** Cooperative mode's default judge - the provider that synthesizes the
    * final answer from every other provider's isolated attempt. */
   defaultJudgeProvider: string
+  /** Keyed by provider name - the model to pass via that provider's own
+   * modelFlag by default. A provider with no entry here runs with whatever
+   * its CLI defaults to (no --model flag emitted). Replaced wholesale on
+   * every setSettings() patch, same as defaultFallbackOrder already is -
+   * callers must spread the existing map before changing one entry. */
+  defaultModelByProvider: Record<string, string>
 }
 
 const DEFAULTS: Settings = {
@@ -20,6 +26,7 @@ const DEFAULTS: Settings = {
   defaultProvider: 'claude',
   defaultFallbackOrder: ['claude', 'codex', 'copilot', 'antigravity'],
   defaultJudgeProvider: 'claude',
+  defaultModelByProvider: {},
 }
 
 let file = path.join(os.homedir(), '.aicli', 'settings.json')

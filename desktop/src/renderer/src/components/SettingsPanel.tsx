@@ -1,14 +1,16 @@
 import FallbackOrderEditor from './FallbackOrderEditor'
-import type { Settings } from '../types'
+import ModelSelect from './ModelSelect'
+import type { ProviderStatus, Settings } from '../types'
 
 interface Props {
   settings: Settings
   providerNames: string[]
+  providers: ProviderStatus[]
   onChange: (patch: Partial<Settings>) => void
   onClose: () => void
 }
 
-export default function SettingsPanel({ settings, providerNames, onChange, onClose }: Props) {
+export default function SettingsPanel({ settings, providerNames, providers, onChange, onClose }: Props) {
   return (
     <div className="setup-overlay" onClick={onClose}>
       <div className="setup-panel settings-panel" onClick={(e) => e.stopPropagation()}>
@@ -56,6 +58,22 @@ export default function SettingsPanel({ settings, providerNames, onChange, onClo
             ))}
           </select>
         </label>
+
+        <div className="settings-row">
+          Default model
+          <div className="settings-model-rows">
+            {providers.map((p) => (
+              <div key={p.name} className="settings-model-row">
+                <span>{p.name}</span>
+                <ModelSelect
+                  models={p.models}
+                  value={settings.defaultModelByProvider[p.name] ?? ''}
+                  onChange={(m) => onChange({ defaultModelByProvider: { ...settings.defaultModelByProvider, [p.name]: m } })}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
 
         <div className="setup-actions">
           <button onClick={onClose}>Close</button>

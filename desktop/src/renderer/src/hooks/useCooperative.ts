@@ -88,6 +88,7 @@ export function useCooperative() {
     judgeProvider: string,
     cwd: string,
     projectId: string | null,
+    modelByProvider: Record<string, string>,
   ) {
     if (!window.aicli) return
     const taskId = crypto.randomUUID()
@@ -106,6 +107,7 @@ export function useCooperative() {
       judgeProvider,
       text,
       attachments,
+      modelByProvider,
     })
 
     setRunningTask(null)

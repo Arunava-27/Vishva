@@ -10,6 +10,8 @@ import SkillFormPanel from './components/SkillFormPanel'
 import McpServersPanel from './components/McpServersPanel'
 import ActivityFeed from './components/ActivityFeed'
 import CooperativeView from './components/CooperativeView'
+import ModelSelect from './components/ModelSelect'
+import UsageView from './components/UsageView'
 import { useProviderPanel } from './hooks/useProviderPanel'
 import { useSessionList } from './hooks/useSessionList'
 import { useProjectList } from './hooks/useProjectList'
@@ -23,6 +25,7 @@ const DEFAULT_SETTINGS: Settings = {
   defaultProvider: 'claude',
   defaultFallbackOrder: DEFAULT_ORDER,
   defaultJudgeProvider: 'claude',
+  defaultModelByProvider: {},
 }
 
 type ProjectFormState = { mode: 'create' } | { mode: 'edit'; project: ProjectData }
@@ -49,7 +52,11 @@ export default function App() {
   const [projectFormState, setProjectFormState] = useState<ProjectFormState | null>(null)
   const [skillFormState, setSkillFormState] = useState<SkillFormState | null>(null)
   const [showMcpServers, setShowMcpServers] = useState(false)
-  const [view, setView] = useState<'chat' | 'cooperative'>('chat')
+  const [view, setView] = useState<'chat' | 'cooperative' | 'usage'>('chat')
+  // Per-provider session-level model override, not a single flat string -
+  // switching activeProvider back and forth preserves each provider's own
+  // custom choice for the rest of this session.
+  const [modelOverrides, setModelOverrides] = useState<Map<string, string>>(new Map())
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const sessionRef = useRef(session)
 
@@ -72,6 +79,7 @@ export default function App() {
   const busy = !!currentTask
   const busySessionIds = new Set([...runningTasks.values()].map((t) => t.sessionId))
   const elapsedSec = currentTask ? Math.round((now - currentTask.startedAt) / 1000) : 0
+  const activeModel = modelOverrides.get(activeProvider) ?? settings.defaultModelByProvider[activeProvider] ?? ''
 
   useEffect(() => {
     if (!window.aicli) return
@@ -160,6 +168,10 @@ export default function App() {
     setSession({ ...base, messages: [...base.messages, optimistic] })
     setRunningTasks((tasks) => new Map(tasks).set(taskId, { taskId, sessionId, provider: activeProvider, activity: [], startedAt: Date.now() }))
 
+    const modelByProvider = {
+      ...settings.defaultModelByProvider,
+      ...(activeModel ? { [activeProvider]: activeModel } : {}),
+    }
     const { session: updated, answeredBy } = await window.aicli.sendMessage({
       taskId,
       sessionId,
@@ -171,6 +183,7 @@ export default function App() {
       fallbackOrder: fallbackOrder.length ? fallbackOrder : [activeProvider],
       text,
       attachments,
+      modelByProvider,
     })
 
     setRunningTasks((tasks) => {
@@ -278,12 +291,14 @@ export default function App() {
         onOpenSettings={() => setShowSettings(true)}
         onOpenMcpServers={() => setShowMcpServers(true)}
         onOpenCooperative={() => setView('cooperative')}
+        onOpenUsage={() => setView('usage')}
       />
       {setupState && <SetupPanel state={setupState} onCancel={handleCancelSetup} onClose={() => setSetupState(null)} />}
       {showSettings && (
         <SettingsPanel
           settings={settings}
           providerNames={providerNames(providerPanel.providers)}
+          providers={providerPanel.providers}
           onChange={handleChangeSettings}
           onClose={() => setShowSettings(false)}
         />
@@ -319,7 +334,10 @@ export default function App() {
           cwd={activeProject?.cwd ?? '.'}
           projectId={activeProjectId}
           defaultJudgeProvider={settings.defaultJudgeProvider}
+          defaultModelByProvider={settings.defaultModelByProvider}
         />
+      ) : view === 'usage' ? (
+        <UsageView />
       ) : (
         <div className="chat">
           <div className="chat-header">
@@ -333,6 +351,14 @@ export default function App() {
                   </option>
                 ))}
               </select>
+            </label>
+            <label>
+              Model:{' '}
+              <ModelSelect
+                models={providerPanel.providers.find((p) => p.name === activeProvider)?.models ?? []}
+                value={activeModel}
+                onChange={(m) => setModelOverrides((prev) => new Map(prev).set(activeProvider, m))}
+              />
             </label>
             <FallbackOrderEditor
               allProviders={providerNames(providerPanel.providers)}

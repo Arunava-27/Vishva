@@ -6,6 +6,7 @@ import path from 'node:path'
 import { sendMessage } from './chat.ts'
 import { PROVIDERS, type Provider } from './providers.ts'
 import { Session, setSessionsDir } from './session.ts'
+import { getUsage, setUsageFile } from './usage.ts'
 
 function withTempSessions<T>(fn: () => Promise<T>): () => Promise<T> {
   return async () => {
@@ -142,6 +143,67 @@ test(
       delete PROVIDERS.first
       delete PROVIDERS.never_run
       fs.rmSync(markerPath, { force: true })
+    }
+  }),
+)
+
+test(
+  'send_message: modelByProvider threads the chosen model into the actual CLI args',
+  withTempSessions(async () => {
+    const tmpUsageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-chat-usage-'))
+    setUsageFile(path.join(tmpUsageDir, 'usage.json'))
+    // scans its own argv for --model and echoes back what it received, so
+    // the test can confirm buildArgs actually appended the right flag/value.
+    const modelAware: Provider = {
+      name: 'model_aware',
+      binary: NODE,
+      installHint: 'n/a',
+      printArgs: [
+        '-e',
+        "const a=process.argv.slice(1);const i=a.indexOf('--model');process.stdout.write(JSON.stringify({result:'model='+(i!==-1?a[i+1]:'none')}))",
+        '{prompt}',
+      ],
+      modelFlag: '--model',
+      verified: true,
+    }
+    PROVIDERS.model_aware = modelAware
+    try {
+      const session = Session.create('chat', '.')
+      await sendMessage(session, 'model_aware', ['model_aware'], 'hello', {
+        modelByProvider: { model_aware: 'opus' },
+      })
+      assert.equal(session.data.messages.at(-1)!.text, 'model=opus')
+
+      const usage = getUsage()
+      assert.equal(usage.model_aware.opus.requestCount, 1)
+    } finally {
+      delete PROVIDERS.model_aware
+      fs.rmSync(tmpUsageDir, { recursive: true, force: true })
+    }
+  }),
+)
+
+test(
+  'send_message: usage is recorded under the "default" model key when no model was selected',
+  withTempSessions(async () => {
+    const tmpUsageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-chat-usage2-'))
+    setUsageFile(path.join(tmpUsageDir, 'usage.json'))
+    const plain: Provider = {
+      name: 'plain_provider',
+      binary: NODE,
+      installHint: 'n/a',
+      printArgs: ['-e', "process.stdout.write('ok')"],
+      verified: true,
+    }
+    PROVIDERS.plain_provider = plain
+    try {
+      const session = Session.create('chat', '.')
+      await sendMessage(session, 'plain_provider', ['plain_provider'], 'hi', {})
+      const usage = getUsage()
+      assert.equal(usage.plain_provider.default.requestCount, 1)
+    } finally {
+      delete PROVIDERS.plain_provider
+      fs.rmSync(tmpUsageDir, { recursive: true, force: true })
     }
   }),
 )

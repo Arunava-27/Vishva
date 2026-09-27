@@ -13,6 +13,24 @@ test('settings: defaults when nothing saved yet', () => {
     assert.equal(s.theme, 'system')
     assert.equal(s.defaultProvider, 'claude')
     assert.deepEqual(s.defaultFallbackOrder, ['claude', 'codex', 'copilot', 'antigravity'])
+    assert.deepEqual(s.defaultModelByProvider, {})
+  } finally {
+    fs.rmSync(path.dirname(tmp), { recursive: true, force: true })
+  }
+})
+
+test('settings: defaultModelByProvider round-trips and persists', () => {
+  const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-settings-')), 'settings.json')
+  setSettingsFile(tmp)
+  try {
+    const after = setSettings({ defaultModelByProvider: { claude: 'opus' } })
+    assert.deepEqual(after.defaultModelByProvider, { claude: 'opus' })
+
+    // a later patch replaces the whole map wholesale (same as
+    // defaultFallbackOrder) - callers must spread the existing map themselves.
+    setSettings({ defaultModelByProvider: { claude: 'opus', codex: 'gpt-5' } })
+    const reloaded = getSettings()
+    assert.deepEqual(reloaded.defaultModelByProvider, { claude: 'opus', codex: 'gpt-5' })
   } finally {
     fs.rmSync(path.dirname(tmp), { recursive: true, force: true })
   }

@@ -59,6 +59,7 @@ export interface ProviderStatus {
   loggedIn: boolean | null
   cooldownUntil: number | null
   lastFailureReason: string | null
+  models: string[]
 }
 
 export interface Settings {
@@ -66,6 +67,7 @@ export interface Settings {
   defaultProvider: string
   defaultFallbackOrder: string[]
   defaultJudgeProvider: string
+  defaultModelByProvider: Record<string, string>
 }
 
 export type ChatEventKind = 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted' | 'tool' | 'usage'
@@ -127,6 +129,19 @@ export interface GeneratedFile {
   name: string
   path: string
 }
+
+export interface UsageEntry {
+  requestCount: number
+  inputTokens: number
+  outputTokens: number
+  reasoningTokens: number
+  costUsd: number
+  other: Record<string, number>
+  lastUsedAt: string
+}
+
+// provider name -> model key -> entry (modelKey is 'default' when no model was selected)
+export type UsageData = Record<string, Record<string, UsageEntry>>
 
 export interface CooperativeProviderResult {
   provider: string
@@ -221,6 +236,7 @@ export interface AicliApi {
     fallbackOrder: string[]
     text: string
     attachments: string[]
+    modelByProvider: Record<string, string>
   }) => Promise<{ session: SessionData; answeredBy: string }>
   cancel: (taskId: string) => Promise<void>
   onChatEvent: (callback: (event: ChatEvent) => void) => () => void
@@ -266,12 +282,15 @@ export interface AicliApi {
     judgeProvider: string
     text: string
     attachments: string[]
+    modelByProvider: Record<string, string>
   }) => Promise<{ session: CooperativeSessionData }>
   cancelCooperative: (taskId: string) => Promise<void>
   onCooperativeEvent: (callback: (event: CooperativeEvent) => void) => () => void
   answerClarification: (taskId: string, provider: string, answer: string) => Promise<void>
   openGeneratedFile: (path: string) => Promise<string>
   revealGeneratedFile: (path: string) => Promise<void>
+  getUsage: () => Promise<UsageData>
+  resetUsage: () => Promise<UsageData>
 }
 
 declare global {

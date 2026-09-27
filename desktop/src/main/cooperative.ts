@@ -38,6 +38,7 @@ import {
 import type { McpServerConfig } from './mcpServers.ts'
 import { displayOutput, PROVIDERS, runProvider, type RunResult, type RunStatus } from './providers.ts'
 import type { ToolCallSummary, UsageSummary } from './session.ts'
+import { recordUsage } from './usage.ts'
 
 export type { GeneratedFile }
 
@@ -112,6 +113,11 @@ export interface CooperativeRunOptions {
    * before it's force-told to give its best answer with no further
    * questions. */
   maxClarifyRounds?: number
+  /** Keyed by provider name, same shape as chat.ts's SendMessageOptions -
+   * the judge's own model choice is looked up under judgeProviderName; if
+   * the judge is also a fan-out participant, they intentionally share one
+   * entry (same provider doing two jobs, not a case needing separate keys). */
+  modelByProvider?: Record<string, string>
 }
 
 const MAX_CLARIFY_ROUNDS = 3
@@ -260,6 +266,7 @@ async function runOneProvider(
       attachments: opts.attachments,
       mcpServers: opts.mcpServers,
       timeoutMs: opts.timeoutMs,
+      model: opts.modelByProvider?.[handle.provider],
       onProcess: (proc) => opts.onProcess?.(handle.provider, proc),
       onStreamEvent: (evt) => {
         const ce = streamEventToChatEvent(handle.provider, evt)
@@ -340,6 +347,10 @@ async function runOneProvider(
     )
   }
 
+  if (status === 'SUCCESS') {
+    recordUsage(handle.provider, opts.modelByProvider?.[handle.provider] ?? 'default', usage)
+  }
+
   return {
     provider: handle.provider,
     status,
@@ -399,6 +410,7 @@ async function runJudge(
       cwd: sessionCwd,
       mcpServers: opts.mcpServers,
       timeoutMs: opts.timeoutMs,
+      model: opts.modelByProvider?.[judgeProviderName],
       onProcess: (proc) => opts.onProcess?.('__judge__', proc),
       onStreamEvent: (evt) => {
         const ce = streamEventToChatEvent(judgeProviderName, evt)
@@ -464,6 +476,8 @@ async function runJudge(
   }
   const newStatusLines = postStatus.filter((l) => !preStatus.includes(l))
   const generatedFiles = locateJudgeGeneratedFiles(sessionCwd, newStatusLines)
+
+  recordUsage(judgeProviderName, opts.modelByProvider?.[judgeProviderName] ?? 'default', judgeUsage)
 
   return {
     judge: {

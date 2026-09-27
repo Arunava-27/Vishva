@@ -15,6 +15,7 @@ import Composer from './Composer'
 import CooperativeSessionList from './CooperativeSessionList'
 import GeneratedFileChip from './GeneratedFileChip'
 import MessageBubble from './MessageBubble'
+import ModelSelect from './ModelSelect'
 
 const MAX_CLARIFY_ROUNDS = 3 // mirrors cooperative.ts's own default - not yet user-configurable
 
@@ -23,6 +24,7 @@ interface Props {
   cwd: string
   projectId: string | null
   defaultJudgeProvider: string
+  defaultModelByProvider: Record<string, string>
 }
 
 function eligibleProviders(providers: ProviderStatus[]): ProviderStatus[] {
@@ -55,7 +57,7 @@ function toDisplayMessage(
   }
 }
 
-export default function CooperativeView({ providers, cwd, projectId, defaultJudgeProvider }: Props) {
+export default function CooperativeView({ providers, cwd, projectId, defaultJudgeProvider, defaultModelByProvider }: Props) {
   const coop = useCooperative()
   const eligible = useMemo(() => eligibleProviders(providers), [providers])
   const [deselected, setDeselected] = useState<Set<string>>(new Set())
@@ -63,6 +65,10 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
   const [repoEligibility, setRepoEligibility] = useState<RepoEligibility | null>(null)
   const [runningParticipants, setRunningParticipants] = useState<string[]>([])
   const [now, setNow] = useState(Date.now())
+  // Per-provider model choice for this run, overriding defaultModelByProvider
+  // when set - keyed by provider name, shared between fan-out chips and the
+  // Judge select (same provider doing two jobs intentionally shares one entry).
+  const [modelByProvider, setModelByProvider] = useState<Map<string, string>>(new Map())
 
   useEffect(() => {
     coop.refreshSessions()
@@ -104,7 +110,12 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
   async function handleSend(text: string, attachments: string[]) {
     if (participants.length === 0) return
     setRunningParticipants(participants)
-    await coop.send(text, attachments, participants, judgeProvider, cwd, projectId)
+    const resolvedModelByProvider: Record<string, string> = {}
+    for (const name of [...participants, judgeProvider]) {
+      const model = modelByProvider.get(name) ?? defaultModelByProvider[name]
+      if (model) resolvedModelByProvider[name] = model
+    }
+    await coop.send(text, attachments, participants, judgeProvider, cwd, projectId, resolvedModelByProvider)
   }
 
   const disabledReason =
@@ -144,14 +155,23 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
             <div className="cooperative-chip-row">
               {eligible.length === 0 && <span className="cooperative-hint">No installed & logged-in providers found.</span>}
               {eligible.map((p) => (
-                <button
-                  key={p.name}
-                  className={'cooperative-chip' + (deselected.has(p.name) ? ' off' : '')}
-                  onClick={() => toggleParticipant(p.name)}
-                  disabled={busy}
-                >
-                  {p.name}
-                </button>
+                <div key={p.name} className="cooperative-chip-group">
+                  <button
+                    className={'cooperative-chip' + (deselected.has(p.name) ? ' off' : '')}
+                    onClick={() => toggleParticipant(p.name)}
+                    disabled={busy}
+                  >
+                    {p.name}
+                  </button>
+                  {!deselected.has(p.name) && (
+                    <ModelSelect
+                      models={p.models}
+                      value={modelByProvider.get(p.name) ?? defaultModelByProvider[p.name] ?? ''}
+                      onChange={(m) => setModelByProvider((prev) => new Map(prev).set(p.name, m))}
+                      disabled={busy}
+                    />
+                  )}
+                </div>
               ))}
             </div>
             <label className="cooperative-judge-select">
@@ -163,6 +183,12 @@ export default function CooperativeView({ providers, cwd, projectId, defaultJudg
                   </option>
                 ))}
               </select>
+              <ModelSelect
+                models={eligible.find((p) => p.name === judgeProvider)?.models ?? []}
+                value={modelByProvider.get(judgeProvider) ?? defaultModelByProvider[judgeProvider] ?? ''}
+                onChange={(m) => setModelByProvider((prev) => new Map(prev).set(judgeProvider, m))}
+                disabled={busy || eligible.length === 0}
+              />
             </label>
           </div>
 

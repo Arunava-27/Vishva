@@ -63,6 +63,7 @@ const api = {
     fallbackOrder: string[]
     text: string
     attachments: string[]
+    modelByProvider: Record<string, string>
   }) => ipcRenderer.invoke('chat:send', args),
   cancel: (taskId: string) => ipcRenderer.invoke('chat:cancel', taskId),
   onChatEvent: (callback: (event: ChatEvent) => void) => {
@@ -115,6 +116,7 @@ const api = {
     judgeProvider: string
     text: string
     attachments: string[]
+    modelByProvider: Record<string, string>
   }) => ipcRenderer.invoke('cooperative:send', args),
   cancelCooperative: (taskId: string) => ipcRenderer.invoke('cooperative:cancel', taskId),
   onCooperativeEvent: (callback: (event: CooperativeEvent) => void) => {
@@ -126,6 +128,8 @@ const api = {
     ipcRenderer.invoke('cooperative:answerClarification', { taskId, provider, answer }),
   openGeneratedFile: (path: string) => ipcRenderer.invoke('cooperative:openGeneratedFile', path),
   revealGeneratedFile: (path: string) => ipcRenderer.invoke('cooperative:revealGeneratedFile', path),
+  getUsage: () => ipcRenderer.invoke('usage:get'),
+  resetUsage: () => ipcRenderer.invoke('usage:reset'),
 }
 
 export type AicliApi = typeof api

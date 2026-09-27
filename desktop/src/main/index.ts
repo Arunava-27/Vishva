@@ -18,6 +18,7 @@ import { getSettings, setSettings, type Settings } from './settings.ts'
 import { runStreamingCommand } from './setup.ts'
 import { Skill, type SkillData } from './skill.ts'
 import { syncAllSkills, syncSkill, unsyncSkill } from './skillSync.ts'
+import { getUsage, resetUsage, type UsageData } from './usage.ts'
 
 let mainWindow: BrowserWindow | null = null
 
@@ -174,6 +175,9 @@ interface ProviderStatus {
   // last RunStatus that triggered a cooldown, even after it's expired -
   // "recovered from RATE_LIMIT 10m ago" is still useful context.
   lastFailureReason: string | null
+  // known model identifiers/aliases for this provider's model-selection flag
+  // (best-effort, see providers.ts's per-provider confidence comments) - empty when unknown.
+  models: string[]
 }
 
 ipcMain.handle('providers:list', async (): Promise<ProviderStatus[]> => {
@@ -198,6 +202,7 @@ ipcMain.handle('providers:list', async (): Promise<ProviderStatus[]> => {
       canLogin: !!p.loginCommand,
       installUrl: p.installUrl,
       loggedIn,
+      models: p.models ?? [],
       ...getCooldownInfo(p.name),
     })
   }
@@ -295,6 +300,10 @@ ipcMain.handle('sessions:rename', (_e: IpcMainInvokeEvent, id: string, task: str
 ipcMain.handle('settings:get', (): Settings => getSettings())
 
 ipcMain.handle('settings:set', (_e: IpcMainInvokeEvent, patch: Partial<Settings>): Settings => setSettings(patch))
+
+ipcMain.handle('usage:get', (): UsageData => getUsage())
+
+ipcMain.handle('usage:reset', (): UsageData => resetUsage())
 
 ipcMain.handle('projects:list', (): ProjectData[] => Project.listAll().map((p) => p.data))
 
@@ -445,6 +454,7 @@ ipcMain.handle(
       fallbackOrder: string[]
       text: string
       attachments: string[]
+      modelByProvider: Record<string, string>
     },
   ): Promise<{ session: SessionData; answeredBy: string }> => {
     const session = args.sessionData
@@ -483,6 +493,7 @@ ipcMain.handle(
       isCancelled: () => runningTask.cancelled,
       projectInstructions,
       mcpServers: activeMcpServers(session.data.projectId),
+      modelByProvider: args.modelByProvider,
     })
 
     runningTasks.delete(args.taskId)
@@ -543,6 +554,7 @@ ipcMain.handle(
       judgeProvider: string
       text: string
       attachments: string[]
+      modelByProvider: Record<string, string>
     },
   ): Promise<{ session: CooperativeSessionData }> => {
     const session = args.sessionData
@@ -585,6 +597,7 @@ ipcMain.handle(
       },
       isCancelled: () => runningTask.cancelled,
       mcpServers: activeMcpServers(session.data.projectId),
+      modelByProvider: args.modelByProvider,
       onClarificationNeeded: (provider, _question, _round) =>
         new Promise<string | null>((resolve) => {
           runningTask.pendingClarifications.set(provider, resolve)
