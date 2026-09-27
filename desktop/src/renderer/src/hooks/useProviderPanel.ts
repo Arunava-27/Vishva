@@ -6,9 +6,13 @@ export function useProviderPanel(setSetupState: Dispatch<SetStateAction<SetupSta
   const [providers, setProviders] = useState<ProviderStatus[]>([])
   const [checking, setChecking] = useState<Record<string, string>>({})
 
-  const refreshProviders = () => window.aicli.listProviders().then(setProviders)
+  const refreshProviders = () => {
+    if (!window.aicli) return
+    window.aicli.listProviders().then(setProviders)
+  }
 
   async function handleInstall(name: string) {
+    if (!window.aicli) return
     setSetupState({ provider: name, action: 'install', log: '', running: true, code: null })
     const { code } = await window.aicli.installProvider(name)
     setSetupState((s) => (s ? { ...s, running: false, code } : s))
@@ -16,6 +20,7 @@ export function useProviderPanel(setSetupState: Dispatch<SetStateAction<SetupSta
   }
 
   async function handleLogin(name: string) {
+    if (!window.aicli) return
     setSetupState({ provider: name, action: 'login', log: '', running: true, code: null })
     const { code } = await window.aicli.loginProvider(name)
     setSetupState((s) => (s ? { ...s, running: false, code } : s))
@@ -23,6 +28,7 @@ export function useProviderPanel(setSetupState: Dispatch<SetStateAction<SetupSta
   }
 
   async function handleCheckConnection(name: string) {
+    if (!window.aicli) return
     setChecking((c) => ({ ...c, [name]: 'Checking...' }))
     const { status } = await window.aicli.checkConnection(name)
     setChecking((c) => ({ ...c, [name]: status === 'SUCCESS' ? '' : status }))

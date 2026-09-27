@@ -4,7 +4,10 @@ import type { SkillData } from '../types'
 export function useSkillList() {
   const [skills, setSkills] = useState<SkillData[]>([])
 
-  const refreshSkills = () => window.aicli.listSkills().then(setSkills)
+  const refreshSkills = () => {
+    if (!window.aicli) return
+    window.aicli.listSkills().then(setSkills)
+  }
 
   async function createSkill(
     name: string,
@@ -13,6 +16,7 @@ export function useSkillList() {
     scope: 'global' | 'project',
     projectId: string | null,
   ): Promise<SkillData> {
+    if (!window.aicli) throw new Error('API not available')
     const s = await window.aicli.createSkill(name, description, body, scope, projectId)
     refreshSkills()
     return s
@@ -22,11 +26,13 @@ export function useSkillList() {
     id: string,
     patch: Partial<Pick<SkillData, 'name' | 'description' | 'body' | 'scope' | 'projectId'>>,
   ) {
+    if (!window.aicli) return
     await window.aicli.updateSkill(id, patch)
     refreshSkills()
   }
 
   async function deleteSkill(id: string) {
+    if (!window.aicli) return
     await window.aicli.deleteSkill(id)
     refreshSkills()
   }

@@ -67,6 +67,7 @@ export default function App() {
   const elapsedSec = currentTask ? Math.round((now - currentTask.startedAt) / 1000) : 0
 
   useEffect(() => {
+    if (!window.aicli) return
     providerPanel.refreshProviders()
     sessionList.refreshSessions()
     projectList.refreshProjects()
@@ -129,10 +130,12 @@ export default function App() {
   }, [showSettings, setupState, projectFormState, skillFormState, showMcpServers])
 
   function handleChangeSettings(patch: Partial<Settings>) {
+    if (!window.aicli) return
     window.aicli.setSettings(patch).then(setSettingsState)
   }
 
   async function handleSend(text: string, attachments: string[]) {
+    if (!window.aicli) return
     const cwd = activeProject?.cwd ?? '.'
     const title = makeTitle(text)
     const sessionId = session?.id || crypto.randomUUID()
@@ -179,7 +182,8 @@ export default function App() {
   }
 
   async function handleCancel() {
-    if (currentTask) await window.aicli.cancel(currentTask.taskId)
+    if (!window.aicli || !currentTask) return
+    await window.aicli.cancel(currentTask.taskId)
   }
 
   function handleNewChat() {
