@@ -11,6 +11,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { RunStatus } from './providers.ts'
 import type { ToolCallSummary, UsageSummary } from './session.ts'
+import type { GeneratedFile } from './cooperativeAttachments.ts'
 
 export let COOPERATIVE_SESSIONS_DIR = path.join(os.homedir(), '.aicli', 'cooperative-sessions')
 
@@ -19,9 +20,14 @@ export function setCooperativeSessionsDir(dir: string): void {
   COOPERATIVE_SESSIONS_DIR = dir
 }
 
+/** Mirrors cooperative.ts's own CooperativeStatus widening - 'CANCELLED'
+ * represents a run cancelled while paused awaiting a clarification answer.
+ * Deliberately not merged into the shared RunStatus type (see cooperative.ts). */
+export type CooperativeStatus = RunStatus | 'CANCELLED'
+
 export interface CooperativeProviderResult {
   provider: string
-  status: RunStatus
+  status: CooperativeStatus
   reply: string
   toolCalls?: ToolCallSummary[]
   usage?: UsageSummary
@@ -29,14 +35,16 @@ export interface CooperativeProviderResult {
   diffPatch: string
   changedFiles: string[]
   rawStderr: string
+  generatedFiles?: GeneratedFile[]
 }
 
 export interface CooperativeJudgeResult {
   provider: string
-  status: RunStatus
+  status: CooperativeStatus
   reply: string
   toolCalls?: ToolCallSummary[]
   usage?: UsageSummary
+  generatedFiles?: GeneratedFile[]
 }
 
 export interface CooperativeTurn {

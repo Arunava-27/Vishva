@@ -96,6 +96,51 @@ test('cooperativeSession: delete removes it from listAll', () => {
   })
 })
 
+test('cooperativeSession: generatedFiles and a CANCELLED status survive a save/load round-trip', () => {
+  withTempDir(() => {
+    const s = CooperativeSession.create('Task', '.', null, ['claude', 'codex'], 'claude')
+    s.save()
+    s.addTurn({
+      prompt: 'write a report',
+      timestamp: new Date().toISOString(),
+      providerResults: [
+        {
+          provider: 'claude',
+          status: 'SUCCESS',
+          reply: 'here is the report',
+          diffStat: '1 file changed',
+          diffPatch: '+ report.pdf',
+          changedFiles: ['report.pdf'],
+          rawStderr: '',
+          generatedFiles: [{ name: 'report.pdf', path: 'C:/attach/sess/claude/report.pdf' }],
+        },
+        {
+          provider: 'codex',
+          status: 'CANCELLED',
+          reply: '',
+          diffStat: '',
+          diffPatch: '',
+          changedFiles: [],
+          rawStderr: 'Cancelled while awaiting clarification.',
+          generatedFiles: [],
+        },
+      ],
+      judge: {
+        provider: 'claude',
+        status: 'SUCCESS',
+        reply: 'final answer',
+        generatedFiles: [{ name: 'summary.xlsx', path: 'D:/proj/summary.xlsx' }],
+      },
+    })
+    const loaded = CooperativeSession.load(s.data.id)
+    const turn = loaded.data.turns[0]
+    assert.deepEqual(turn.providerResults[0].generatedFiles, [{ name: 'report.pdf', path: 'C:/attach/sess/claude/report.pdf' }])
+    assert.equal(turn.providerResults[1].status, 'CANCELLED')
+    assert.deepEqual(turn.providerResults[1].generatedFiles, [])
+    assert.deepEqual(turn.judge?.generatedFiles, [{ name: 'summary.xlsx', path: 'D:/proj/summary.xlsx' }])
+  })
+})
+
 test('cooperativeSession: judge: null and judgeError are preserved through round-trip', () => {
   withTempDir(() => {
     const s = CooperativeSession.create('Task', '.', null, ['claude'], 'claude')

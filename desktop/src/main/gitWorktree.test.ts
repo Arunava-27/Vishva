@@ -6,11 +6,14 @@ import os from 'node:os'
 import path from 'node:path'
 import {
   checkRepoEligibility,
+  classifyDeliverableFiles,
   createWorktrees,
   diffWorktree,
+  gitStatusShort,
   hasCommits,
   hasUncommittedChanges,
   isGitRepo,
+  parseStatusLinePath,
   removeWorktrees,
   repoRoot,
   setWorktreesDir,
@@ -48,6 +51,49 @@ function withTempRepo(fn: (repo: string) => Promise<void>): () => Promise<void> 
     }
   }
 }
+
+test('parseStatusLinePath: plain modified/untracked lines', () => {
+  assert.equal(parseStatusLinePath('?? report.pdf'), 'report.pdf')
+  assert.equal(parseStatusLinePath(' M dir/chart.png'), 'dir/chart.png')
+  assert.equal(parseStatusLinePath('A  new-file.csv'), 'new-file.csv')
+})
+
+test('parseStatusLinePath: rename lines keep the new path', () => {
+  assert.equal(parseStatusLinePath('R  old.csv -> new.csv'), 'new.csv')
+  assert.equal(parseStatusLinePath('R  dir/old.xlsx -> dir/renamed.xlsx'), 'dir/renamed.xlsx')
+})
+
+test('parseStatusLinePath: quoted paths (spaces/special chars) are unescaped', () => {
+  assert.equal(parseStatusLinePath('?? "report with spaces.pdf"'), 'report with spaces.pdf')
+})
+
+test('parseStatusLinePath: too-short or empty lines return null', () => {
+  assert.equal(parseStatusLinePath(''), null)
+  assert.equal(parseStatusLinePath('??'), null)
+})
+
+test('classifyDeliverableFiles: filters to known deliverable extensions, case-insensitively', () => {
+  const lines = ['?? report.PDF', ' M src/index.ts', 'A  chart.png', '?? notes.txt', 'R  a.csv -> b.csv']
+  assert.deepEqual(classifyDeliverableFiles(lines), ['report.PDF', 'chart.png', 'b.csv'])
+})
+
+test('classifyDeliverableFiles: excludes source-code extensions', () => {
+  const lines = ['?? main.ts', 'M  index.js', '?? styles.css']
+  assert.deepEqual(classifyDeliverableFiles(lines), [])
+})
+
+test(
+  'gitStatusShort: returns trimmed non-empty status lines',
+  withTempRepo(async (repo) => {
+    initRepo(repo)
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hello\n')
+    git(repo, ['add', 'a.txt'])
+    git(repo, ['commit', '-q', '-m', 'init'])
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'new\n')
+    const lines = await gitStatusShort(repo)
+    assert.deepEqual(lines, ['?? b.txt'])
+  }),
+)
 
 test('isGitRepo / hasCommits: false for a plain non-repo directory', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aicli-gitwt-plain-'))
@@ -186,6 +232,63 @@ test(
     } finally {
       await removeWorktrees(root, handles)
       await unpinSnapshot(root, 'sess-4')
+    }
+  }),
+)
+
+test(
+  'diffWorktree: a dirty real repo does NOT leak into the diff for a provider that made no edits of its own',
+  withTempRepo(async (repo) => {
+    initRepo(repo)
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hello\n')
+    git(repo, ['add', 'a.txt'])
+    git(repo, ['commit', '-q', '-m', 'init'])
+    // pre-existing uncommitted work in the real repo, carried into every
+    // worktree by design (createWorktrees) - this must NOT show up as if the
+    // provider itself had made these changes.
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'pre-existing dirty edit\n')
+    fs.writeFileSync(path.join(repo, 'untracked.txt'), 'pre-existing untracked file\n')
+    const root = await repoRoot(repo)
+
+    const handles = await createWorktrees(root, repo, 'sess-baseline', ['claude'])
+    try {
+      // provider makes no edits at all (e.g. answered a question, wrote no files)
+      const diff = await diffWorktree(handles[0])
+      assert.deepEqual(diff.changedFiles, [])
+      assert.equal(diff.diffStat, '')
+      assert.equal(diff.diffPatch, '')
+      // but the carried-over content really was there for the provider to see
+      assert.equal(fs.readFileSync(path.join(handles[0].cwd, 'a.txt'), 'utf-8'), 'pre-existing dirty edit\n')
+      assert.equal(fs.readFileSync(path.join(handles[0].cwd, 'untracked.txt'), 'utf-8'), 'pre-existing untracked file\n')
+    } finally {
+      await removeWorktrees(root, handles)
+      await unpinSnapshot(root, 'sess-baseline')
+    }
+  }),
+)
+
+test(
+  'diffWorktree: a provider\'s own edit on top of a dirty real repo shows only that edit',
+  withTempRepo(async (repo) => {
+    initRepo(repo)
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'hello\n')
+    fs.writeFileSync(path.join(repo, 'b.txt'), 'hello\n')
+    git(repo, ['add', 'a.txt', 'b.txt'])
+    git(repo, ['commit', '-q', '-m', 'init'])
+    fs.writeFileSync(path.join(repo, 'a.txt'), 'pre-existing dirty edit\n')
+    const root = await repoRoot(repo)
+
+    const handles = await createWorktrees(root, repo, 'sess-baseline2', ['claude'])
+    try {
+      fs.writeFileSync(path.join(handles[0].cwd, 'b.txt'), 'edited by the provider\n')
+      const diff = await diffWorktree(handles[0])
+      assert.ok(diff.changedFiles.some((f) => f.includes('b.txt')))
+      assert.ok(!diff.changedFiles.some((f) => f.includes('a.txt')), 'the pre-existing dirty edit to a.txt must not appear')
+      assert.ok(diff.diffPatch.includes('edited by the provider'))
+      assert.ok(!diff.diffPatch.includes('pre-existing dirty edit'))
+    } finally {
+      await removeWorktrees(root, handles)
+      await unpinSnapshot(root, 'sess-baseline2')
     }
   }),
 )

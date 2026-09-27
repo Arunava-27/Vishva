@@ -118,9 +118,19 @@ export interface McpServerConfig {
 
 export type RunStatus = 'SUCCESS' | 'RATE_LIMIT' | 'AUTH_FAILURE' | 'TIMEOUT' | 'TEMPORARY_SERVER_ERROR' | 'UNKNOWN_ERROR' | 'NOT_INSTALLED'
 
+/** Cooperative-mode-only status widening - 'CANCELLED' represents a run
+ * cancelled while paused awaiting a clarification answer. Mirrors the same
+ * widening in cooperative.ts/cooperativeSession.ts on the main-process side. */
+export type CooperativeStatus = RunStatus | 'CANCELLED'
+
+export interface GeneratedFile {
+  name: string
+  path: string
+}
+
 export interface CooperativeProviderResult {
   provider: string
-  status: RunStatus
+  status: CooperativeStatus
   reply: string
   toolCalls?: ToolCallSummary[]
   usage?: UsageSummary
@@ -128,14 +138,16 @@ export interface CooperativeProviderResult {
   diffPatch: string
   changedFiles: string[]
   rawStderr: string
+  generatedFiles: GeneratedFile[]
 }
 
 export interface CooperativeJudgeResult {
   provider: string
-  status: RunStatus
+  status: CooperativeStatus
   reply: string
   toolCalls?: ToolCallSummary[]
   usage?: UsageSummary
+  generatedFiles: GeneratedFile[]
 }
 
 export interface CooperativeTurn {
@@ -157,7 +169,16 @@ export interface CooperativeSessionData {
   status: string
 }
 
-export type CooperativeEventKind = ChatEventKind | 'worktree-setup' | 'worktree-error' | 'judge-start' | 'judge-success' | 'judge-failure'
+export type CooperativeEventKind =
+  | ChatEventKind
+  | 'worktree-setup'
+  | 'worktree-error'
+  | 'judge-start'
+  | 'judge-success'
+  | 'judge-failure'
+  | 'clarify-question'
+  | 'clarify-answered'
+  | 'clarify-cap-reached'
 
 export interface CooperativeEvent {
   kind: CooperativeEventKind
@@ -248,6 +269,9 @@ export interface AicliApi {
   }) => Promise<{ session: CooperativeSessionData }>
   cancelCooperative: (taskId: string) => Promise<void>
   onCooperativeEvent: (callback: (event: CooperativeEvent) => void) => () => void
+  answerClarification: (taskId: string, provider: string, answer: string) => Promise<void>
+  openGeneratedFile: (path: string) => Promise<string>
+  revealGeneratedFile: (path: string) => Promise<void>
 }
 
 declare global {

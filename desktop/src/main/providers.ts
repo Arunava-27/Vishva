@@ -125,25 +125,43 @@ export async function resolveExecutablePath(binary: string): Promise<string | nu
     }
   }
 
-  try {
-    const { stdout } = await execFile('where', [binary])
-    const matches = stdout
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean)
-    if (matches.length === 0) return null
-    // `where` can return an extensionless file (e.g. a POSIX shell shim
-    // alongside npm.cmd) ahead of the one Windows can actually execute
-    // directly - rank by PATHEXT, the same priority cmd.exe itself uses when
-    // you type a bare command name, instead of trusting `where`'s own order.
-    const pathext = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase())
-    const ranked = matches
-      .map((m) => ({ path: m, rank: pathext.indexOf(path.extname(m).toLowerCase()) }))
-      .sort((a, b) => (a.rank === -1 ? Infinity : a.rank) - (b.rank === -1 ? Infinity : b.rank))
-    return ranked[0].path
-  } catch {
-    return null
+  // where.exe has been observed to fail transiently under heavy concurrent
+  // process load (e.g. Cooperative mode spawning several provider CLIs at
+  // once) even for a binary that resolves fine moments before/after - one
+  // retry after a short pause absorbs that without masking a real absence
+  // (a binary that's actually missing fails both attempts identically).
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const { stdout } = await execFile('where', [binary])
+      const matches = stdout
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+      if (matches.length === 0) {
+        if (attempt === 0) {
+          await new Promise((r) => setTimeout(r, 150))
+          continue
+        }
+        return null
+      }
+      // `where` can return an extensionless file (e.g. a POSIX shell shim
+      // alongside npm.cmd) ahead of the one Windows can actually execute
+      // directly - rank by PATHEXT, the same priority cmd.exe itself uses when
+      // you type a bare command name, instead of trusting `where`'s own order.
+      const pathext = (process.env.PATHEXT ?? '.COM;.EXE;.BAT;.CMD').split(';').map((e) => e.toLowerCase())
+      const ranked = matches
+        .map((m) => ({ path: m, rank: pathext.indexOf(path.extname(m).toLowerCase()) }))
+        .sort((a, b) => (a.rank === -1 ? Infinity : a.rank) - (b.rank === -1 ? Infinity : b.rank))
+      return ranked[0].path
+    } catch {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 150))
+        continue
+      }
+      return null
+    }
   }
+  return null
 }
 
 export async function isInstalled(binary: string): Promise<boolean> {

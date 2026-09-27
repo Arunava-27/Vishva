@@ -1,10 +1,22 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CooperativeEvent, CooperativeSessionData } from '../types'
 
+export interface PendingClarification {
+  provider: string
+  question: string
+  round: number
+}
+
 export interface RunningCooperativeTask {
   taskId: string
   activity: CooperativeEvent[]
   startedAt: number
+  pendingClarifications: Map<string, PendingClarification>
+}
+
+function parseRound(detail: string | undefined): number {
+  const m = detail?.match(/round (\d+)/)
+  return m ? Number(m[1]) : 1
 }
 
 // Same truncate-to-60-chars convention as App.tsx's own makeTitle() for
@@ -33,7 +45,13 @@ export function useCooperative() {
     const off = window.aicli.onCooperativeEvent((event) => {
       setRunningTask((task) => {
         if (!task || task.taskId !== event.taskId) return task
-        return { ...task, activity: [...task.activity, event] }
+        const pendingClarifications = new Map(task.pendingClarifications)
+        if (event.kind === 'clarify-question' && event.provider) {
+          pendingClarifications.set(event.provider, { provider: event.provider, question: event.message, round: parseRound(event.detail) })
+        } else if ((event.kind === 'clarify-answered' || event.kind === 'clarify-cap-reached') && event.provider) {
+          pendingClarifications.delete(event.provider)
+        }
+        return { ...task, activity: [...task.activity, event], pendingClarifications }
       })
     })
     return off
@@ -75,7 +93,7 @@ export function useCooperative() {
     const taskId = crypto.randomUUID()
     const sessionId = session?.id || crypto.randomUUID()
     const task = session?.task ?? makeTitle(text)
-    setRunningTask({ taskId, activity: [], startedAt: Date.now() })
+    setRunningTask({ taskId, activity: [], startedAt: Date.now(), pendingClarifications: new Map() })
 
     const { session: updated } = await window.aicli.sendCooperative({
       taskId,
@@ -104,5 +122,28 @@ export function useCooperative() {
     await window.aicli.cancelCooperative(runningTask.taskId)
   }
 
-  return { sessions, session, runningTask, refreshSessions, openSession, deleteSession, renameSession, send, cancel, setSession }
+  async function answerClarification(provider: string, answer: string) {
+    if (!window.aicli || !runningTask) return
+    await window.aicli.answerClarification(runningTask.taskId, provider, answer)
+    setRunningTask((task) => {
+      if (!task) return task
+      const pendingClarifications = new Map(task.pendingClarifications)
+      pendingClarifications.delete(provider)
+      return { ...task, pendingClarifications }
+    })
+  }
+
+  return {
+    sessions,
+    session,
+    runningTask,
+    refreshSessions,
+    openSession,
+    deleteSession,
+    renameSession,
+    send,
+    cancel,
+    answerClarification,
+    setSession,
+  }
 }

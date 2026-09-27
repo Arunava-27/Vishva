@@ -46,6 +46,11 @@ interface CooperativeRunningTask {
   procs: Map<string, ChildProc>
   cancelled: boolean
   startedAt: number
+  // Resolvers for any in-flight clarification question(s), keyed by the real
+  // provider name (fan-out participant, or the judge's chosen provider name -
+  // same identity CooperativeEvent.provider already uses). At most one
+  // pending entry per name at a time.
+  pendingClarifications: Map<string, (answer: string | null) => void>
 }
 const cooperativeRunningTasks = new Map<string, CooperativeRunningTask>()
 
@@ -103,6 +108,8 @@ function createWindow(): void {
       for (const task of cooperativeRunningTasks.values()) {
         task.cancelled = true
         for (const proc of task.procs.values()) killTree(proc)
+        for (const resolve of task.pendingClarifications.values()) resolve(null)
+        task.pendingClarifications.clear()
       }
       cooperativeRunningTasks.clear()
       mainWindow?.destroy()
@@ -542,7 +549,13 @@ ipcMain.handle(
       ? new CooperativeSession(args.sessionData)
       : CooperativeSession.create(args.task, args.cwd, args.projectId, args.providers, args.judgeProvider, args.sessionId)
 
-    const runningTask: CooperativeRunningTask = { sessionId: session.data.id, procs: new Map(), cancelled: false, startedAt: Date.now() }
+    const runningTask: CooperativeRunningTask = {
+      sessionId: session.data.id,
+      procs: new Map(),
+      cancelled: false,
+      startedAt: Date.now(),
+      pendingClarifications: new Map(),
+    }
     cooperativeRunningTasks.set(args.taskId, runningTask)
 
     // same best-effort/first-turn-only convention as chat:send - see its
@@ -572,6 +585,10 @@ ipcMain.handle(
       },
       isCancelled: () => runningTask.cancelled,
       mcpServers: activeMcpServers(session.data.projectId),
+      onClarificationNeeded: (provider, _question, _round) =>
+        new Promise<string | null>((resolve) => {
+          runningTask.pendingClarifications.set(provider, resolve)
+        }),
     })
 
     cooperativeRunningTasks.delete(args.taskId)
@@ -600,4 +617,25 @@ ipcMain.handle('cooperative:cancel', (_e: IpcMainInvokeEvent, taskId: string) =>
   if (!task) return
   task.cancelled = true
   for (const proc of task.procs.values()) killTree(proc)
+  for (const resolve of task.pendingClarifications.values()) resolve(null)
+  task.pendingClarifications.clear()
+})
+
+ipcMain.handle(
+  'cooperative:answerClarification',
+  (_e: IpcMainInvokeEvent, args: { taskId: string; provider: string; answer: string }): void => {
+    const task = cooperativeRunningTasks.get(args.taskId)
+    const resolve = task?.pendingClarifications.get(args.provider)
+    if (!resolve) return
+    task!.pendingClarifications.delete(args.provider)
+    resolve(args.answer)
+  },
+)
+
+ipcMain.handle('cooperative:openGeneratedFile', (_e: IpcMainInvokeEvent, filePath: string): Promise<string> => {
+  return shell.openPath(filePath)
+})
+
+ipcMain.handle('cooperative:revealGeneratedFile', (_e: IpcMainInvokeEvent, filePath: string): void => {
+  shell.showItemInFolder(filePath)
 })

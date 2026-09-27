@@ -27,7 +27,14 @@ export interface WorktreeHandle {
   /** The subdirectory-of-repo-aware cwd to actually hand to runProvider() -
    * equals `path` when the session's cwd was the repo root itself. */
   cwd: string
-  baseCommit: string
+  /** What diffWorktree() compares this worktree's current state against -
+   * the commit right AFTER the dirty-tree carryover (stash-apply + untracked
+   * copy) landed, not the original repo HEAD. This isolates what the
+   * PROVIDER itself changed from whatever pre-existing uncommitted work was
+   * already in the real working tree when the run started - otherwise every
+   * provider's diff would also include that shared baseline, making
+   * unrelated providers look like they'd all made identical edits. */
+  diffBaseCommit: string
 }
 
 export interface RepoEligibility {
@@ -79,6 +86,36 @@ export async function checkRepoEligibility(cwd: string): Promise<RepoEligibility
 
 function worktreeBaseDir(sessionId: string): string {
   return path.join(WORKTREES_DIR, sessionId)
+}
+
+/** After a worktree's dirty-tree carryover (stash-apply + untracked copy)
+ * lands, this bakes that carried-over state into a throwaway local commit
+ * and returns its SHA - the reference point diffWorktree() should compare
+ * against, so a provider's reported diff reflects only what it itself
+ * changed, not the pre-existing uncommitted work every worktree started
+ * with. Returns `checkoutCommit` unchanged when the worktree came up clean
+ * (nothing to bake in). Uses -c user.name/user.email so this works even on a
+ * machine with no git identity configured globally - never pushed or
+ * shared, purely internal bookkeeping local to this one worktree. */
+async function snapshotWorktreeBaseline(worktreePath: string, checkoutCommit: string): Promise<string> {
+  const dirty = await hasUncommittedChanges(worktreePath)
+  const hasUntracked = (await git(['ls-files', '--others', '--exclude-standard'], worktreePath)) !== ''
+  if (!dirty && !hasUntracked) return checkoutCommit
+  try {
+    await execFile('git', ['add', '-A'], { cwd: worktreePath })
+    await execFile(
+      'git',
+      ['-c', 'user.name=aicli', '-c', 'user.email=aicli@localhost', 'commit', '--no-verify', '-q', '-m', 'aicli-cooperative baseline (carried-over local changes)'],
+      { cwd: worktreePath },
+    )
+    return await git(['rev-parse', 'HEAD'], worktreePath)
+  } catch {
+    // best-effort - if this fails for any reason (e.g. no writable git
+    // config path), fall back to the original commit; the diff will simply
+    // include the carried-over changes alongside the provider's own, same as
+    // before this baselining existed.
+    return checkoutCommit
+  }
 }
 
 /**
@@ -147,8 +184,9 @@ export async function createWorktrees(
       }
     }
 
+    const diffBaseCommit = await snapshotWorktreeBaseline(worktreePath, baseCommit)
     const cwd = relativeCwd ? path.join(worktreePath, relativeCwd) : worktreePath
-    handles.push({ provider, path: worktreePath, cwd, baseCommit })
+    handles.push({ provider, path: worktreePath, cwd, diffBaseCommit })
   }
 
   return handles
@@ -164,9 +202,12 @@ const DIFF_PATCH_MAX_CHARS = 200_000
 
 export async function diffWorktree(handle: WorktreeHandle): Promise<WorktreeDiff> {
   const [status, diffStat, diffPatch] = await Promise.all([
+    // `status --short` compares against HEAD, which is diffBaseCommit itself
+    // (that's what the baseline commit moved HEAD to) - so this already
+    // reflects only the provider's own changes, no explicit ref needed here.
     git(['status', '--short'], handle.path),
-    git(['diff', handle.baseCommit, '--stat'], handle.path),
-    git(['diff', handle.baseCommit], handle.path),
+    git(['diff', handle.diffBaseCommit, '--stat'], handle.path),
+    git(['diff', handle.diffBaseCommit], handle.path),
   ])
   const changedFiles = status
     .split('\n')
@@ -177,6 +218,54 @@ export async function diffWorktree(handle: WorktreeHandle): Promise<WorktreeDiff
       ? diffPatch.slice(0, DIFF_PATCH_MAX_CHARS) + `\n...[diff truncated, ${diffPatch.length - DIFF_PATCH_MAX_CHARS} more chars]`
       : diffPatch
   return { changedFiles, diffStat, diffPatch: truncated }
+}
+
+export async function gitStatusShort(cwd: string): Promise<string[]> {
+  const raw = await git(['status', '--short'], cwd)
+  return raw
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+}
+
+/** Extracts the file path from one `git status --short` line - handles the
+ * plain `XY path` form, rename lines (`XY orig -> new`, keeping the new
+ * path), and git's quoted-path form (a path containing spaces/special
+ * characters is wrapped in double quotes with C-style escapes; git's escape
+ * set overlaps enough with JSON's for common cases that JSON.parse is a good
+ * enough unescaper here - this is a classification helper, not a strict
+ * parser). Returns null for a line too short to contain a real path. */
+export function parseStatusLinePath(line: string): string | null {
+  const trimmed = line.trim()
+  if (trimmed.length < 4) return null
+  let rest = trimmed.slice(2).trimStart()
+  const arrow = rest.indexOf(' -> ')
+  if (arrow !== -1) rest = rest.slice(arrow + 4)
+  if (rest.startsWith('"') && rest.endsWith('"') && rest.length >= 2) {
+    try {
+      return JSON.parse(rest)
+    } catch {
+      return rest.slice(1, -1)
+    }
+  }
+  return rest || null
+}
+
+const DELIVERABLE_EXTENSIONS = new Set(['.pdf', '.xlsx', '.xls', '.csv', '.docx', '.pptx', '.png', '.jpg', '.jpeg', '.svg', '.gif'])
+
+/** Which of these `git status --short` lines look like a real deliverable
+ * file by extension - a UI suggestion surface (offer a preview/open chip),
+ * not a security boundary, so extension-only classification is accepted;
+ * callers that touch the filesystem (cooperativeAttachments.ts) additionally
+ * skip zero-byte files. Returns relative paths, not raw status lines. */
+export function classifyDeliverableFiles(changedFiles: string[]): string[] {
+  const result: string[] = []
+  for (const line of changedFiles) {
+    const rel = parseStatusLinePath(line)
+    if (!rel) continue
+    if (DELIVERABLE_EXTENSIONS.has(path.extname(rel).toLowerCase())) result.push(rel)
+  }
+  return result
 }
 
 /** Removes worktrees and unpins the stash snapshot. Never throws - a failed

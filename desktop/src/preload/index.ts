@@ -26,6 +26,7 @@ interface CooperativeEvent {
   kind:
     | 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted' | 'tool' | 'usage'
     | 'worktree-setup' | 'worktree-error' | 'judge-start' | 'judge-success' | 'judge-failure'
+    | 'clarify-question' | 'clarify-answered' | 'clarify-cap-reached'
   provider: string | null
   message: string
   detail?: string
@@ -121,6 +122,10 @@ const api = {
     ipcRenderer.on('cooperative:event', listener)
     return () => ipcRenderer.removeListener('cooperative:event', listener)
   },
+  answerClarification: (taskId: string, provider: string, answer: string) =>
+    ipcRenderer.invoke('cooperative:answerClarification', { taskId, provider, answer }),
+  openGeneratedFile: (path: string) => ipcRenderer.invoke('cooperative:openGeneratedFile', path),
+  revealGeneratedFile: (path: string) => ipcRenderer.invoke('cooperative:revealGeneratedFile', path),
 }
 
 export type AicliApi = typeof api
