@@ -9,6 +9,7 @@ import ProjectFormPanel from './components/ProjectFormPanel'
 import SkillFormPanel from './components/SkillFormPanel'
 import McpServersPanel from './components/McpServersPanel'
 import ActivityFeed from './components/ActivityFeed'
+import CooperativeView from './components/CooperativeView'
 import { useProviderPanel } from './hooks/useProviderPanel'
 import { useSessionList } from './hooks/useSessionList'
 import { useProjectList } from './hooks/useProjectList'
@@ -17,7 +18,12 @@ import { useMcpServers } from './hooks/useMcpServers'
 import type { ChatEvent, Message, ProjectData, Settings, SessionData, SkillData } from './types'
 
 const DEFAULT_ORDER = ['claude', 'codex', 'copilot', 'antigravity']
-const DEFAULT_SETTINGS: Settings = { theme: 'system', defaultProvider: 'claude', defaultFallbackOrder: DEFAULT_ORDER }
+const DEFAULT_SETTINGS: Settings = {
+  theme: 'system',
+  defaultProvider: 'claude',
+  defaultFallbackOrder: DEFAULT_ORDER,
+  defaultJudgeProvider: 'claude',
+}
 
 type ProjectFormState = { mode: 'create' } | { mode: 'edit'; project: ProjectData }
 type SkillFormState = { mode: 'create' } | { mode: 'edit'; skill: SkillData }
@@ -43,6 +49,7 @@ export default function App() {
   const [projectFormState, setProjectFormState] = useState<ProjectFormState | null>(null)
   const [skillFormState, setSkillFormState] = useState<SkillFormState | null>(null)
   const [showMcpServers, setShowMcpServers] = useState(false)
+  const [view, setView] = useState<'chat' | 'cooperative'>('chat')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const sessionRef = useRef(session)
 
@@ -189,17 +196,20 @@ export default function App() {
   function handleNewChat() {
     setSession(null)
     setActiveProjectId(null)
+    setView('chat')
   }
 
   function handleNewChatInProject(projectId: string) {
     setSession(null)
     setActiveProjectId(projectId)
+    setView('chat')
   }
 
   async function handleOpenSession(id: string) {
     const data = await window.aicli.openSession(id)
     setSession(data)
     setActiveProjectId(data.projectId)
+    setView('chat')
     const lastAssistant = [...data.messages].reverse().find((m) => m.role === 'assistant')
     if (lastAssistant?.provider) setActiveProvider(lastAssistant.provider)
   }
@@ -267,6 +277,7 @@ export default function App() {
         checking={providerPanel.checking}
         onOpenSettings={() => setShowSettings(true)}
         onOpenMcpServers={() => setShowMcpServers(true)}
+        onOpenCooperative={() => setView('cooperative')}
       />
       {setupState && <SetupPanel state={setupState} onCancel={handleCancelSetup} onClose={() => setSetupState(null)} />}
       {showSettings && (
@@ -302,43 +313,52 @@ export default function App() {
           onClose={() => setShowMcpServers(false)}
         />
       )}
-      <div className="chat">
-        <div className="chat-header">
-          {activeProject && <span className="active-project-badge">{activeProject.name}</span>}
-          <label>
-            Talking to:{' '}
-            <select value={activeProvider} onChange={(e) => setActiveProvider(e.target.value)}>
-              {providerNames(providerPanel.providers).map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <FallbackOrderEditor
-            allProviders={providerNames(providerPanel.providers)}
-            order={fallbackOrder}
-            onChange={setFallbackOrder}
-          />
-          {runningTasks.size > 0 && <span className="running-tasks-count">{runningTasks.size} running…</span>}
-        </div>
+      {view === 'cooperative' ? (
+        <CooperativeView
+          providers={providerPanel.providers}
+          cwd={activeProject?.cwd ?? '.'}
+          projectId={activeProjectId}
+          defaultJudgeProvider={settings.defaultJudgeProvider}
+        />
+      ) : (
+        <div className="chat">
+          <div className="chat-header">
+            {activeProject && <span className="active-project-badge">{activeProject.name}</span>}
+            <label>
+              Talking to:{' '}
+              <select value={activeProvider} onChange={(e) => setActiveProvider(e.target.value)}>
+                {providerNames(providerPanel.providers).map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <FallbackOrderEditor
+              allProviders={providerNames(providerPanel.providers)}
+              order={fallbackOrder}
+              onChange={setFallbackOrder}
+            />
+            {runningTasks.size > 0 && <span className="running-tasks-count">{runningTasks.size} running…</span>}
+          </div>
 
-        <div className="messages">
-          {!session && (
-            <div className="empty-state">
-              <p>{activeProject ? `New chat in ${activeProject.name}` : 'Pick a provider and start typing.'}</p>
-              <p className="empty-state-hint">Ctrl/Cmd+K starts a new chat at any time.</p>
-            </div>
-          )}
-          {(session?.messages ?? []).map((m, i) => (
-            <MessageBubble key={i} message={m} />
-          ))}
-          {currentTask && <ActivityFeed events={currentTask.activity} elapsedSec={elapsedSec} />}
-          <div ref={messagesEndRef} />
-        </div>
+          <div className="messages">
+            {!session && (
+              <div className="empty-state">
+                <p>{activeProject ? `New chat in ${activeProject.name}` : 'Pick a provider and start typing.'}</p>
+                <p className="empty-state-hint">Ctrl/Cmd+K starts a new chat at any time.</p>
+              </div>
+            )}
+            {(session?.messages ?? []).map((m, i) => (
+              <MessageBubble key={i} message={m} />
+            ))}
+            {currentTask && <ActivityFeed events={currentTask.activity} elapsedSec={elapsedSec} />}
+            <div ref={messagesEndRef} />
+          </div>
 
-        <Composer busy={busy} onSend={handleSend} onCancel={handleCancel} />
-      </div>
+          <Composer busy={busy} onSend={handleSend} onCancel={handleCancel} />
+        </div>
+      )}
     </div>
   )
 }

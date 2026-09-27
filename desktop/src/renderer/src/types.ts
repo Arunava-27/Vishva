@@ -65,6 +65,7 @@ export interface Settings {
   theme: 'system' | 'light' | 'dark'
   defaultProvider: string
   defaultFallbackOrder: string[]
+  defaultJudgeProvider: string
 }
 
 export type ChatEventKind = 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted' | 'tool' | 'usage'
@@ -113,6 +114,70 @@ export interface McpServerConfig {
   args: string[]
   env: Record<string, string>
   url: string
+}
+
+export type RunStatus = 'SUCCESS' | 'RATE_LIMIT' | 'AUTH_FAILURE' | 'TIMEOUT' | 'TEMPORARY_SERVER_ERROR' | 'UNKNOWN_ERROR' | 'NOT_INSTALLED'
+
+export interface CooperativeProviderResult {
+  provider: string
+  status: RunStatus
+  reply: string
+  toolCalls?: ToolCallSummary[]
+  usage?: UsageSummary
+  diffStat: string
+  diffPatch: string
+  changedFiles: string[]
+  rawStderr: string
+}
+
+export interface CooperativeJudgeResult {
+  provider: string
+  status: RunStatus
+  reply: string
+  toolCalls?: ToolCallSummary[]
+  usage?: UsageSummary
+}
+
+export interface CooperativeTurn {
+  prompt: string
+  timestamp: string
+  providerResults: CooperativeProviderResult[]
+  judge: CooperativeJudgeResult | null
+  judgeError?: string
+}
+
+export interface CooperativeSessionData {
+  id: string
+  task: string
+  cwd: string
+  projectId: string | null
+  participants: string[]
+  judgeProvider: string
+  turns: CooperativeTurn[]
+  status: string
+}
+
+export type CooperativeEventKind = ChatEventKind | 'worktree-setup' | 'worktree-error' | 'judge-start' | 'judge-success' | 'judge-failure'
+
+export interface CooperativeEvent {
+  kind: CooperativeEventKind
+  provider: string | null
+  message: string
+  detail?: string
+  timestamp: string
+  taskId: string
+  toolId?: string
+  toolName?: string
+  toolInput?: unknown
+  toolResult?: unknown
+  toolDiff?: { added: number; removed: number }
+  usage?: UsageSummary
+}
+
+export interface RepoEligibility {
+  isRepo: boolean
+  hasCommits: boolean
+  dirty: boolean
 }
 
 export interface AicliApi {
@@ -164,6 +229,25 @@ export interface AicliApi {
   addMcpServer: (input: Omit<McpServerConfig, 'id'>) => Promise<McpServerConfig>
   updateMcpServer: (id: string, patch: Partial<Omit<McpServerConfig, 'id'>>) => Promise<McpServerConfig>
   removeMcpServer: (id: string) => Promise<void>
+  checkCooperativeRepo: (cwd: string) => Promise<RepoEligibility>
+  listCooperativeSessions: () => Promise<CooperativeSessionData[]>
+  openCooperativeSession: (id: string) => Promise<CooperativeSessionData>
+  deleteCooperativeSession: (id: string) => Promise<void>
+  renameCooperativeSession: (id: string, task: string) => Promise<CooperativeSessionData>
+  sendCooperative: (args: {
+    taskId: string
+    sessionId: string
+    sessionData: CooperativeSessionData | null
+    task: string
+    cwd: string
+    projectId: string | null
+    providers: string[]
+    judgeProvider: string
+    text: string
+    attachments: string[]
+  }) => Promise<{ session: CooperativeSessionData }>
+  cancelCooperative: (taskId: string) => Promise<void>
+  onCooperativeEvent: (callback: (event: CooperativeEvent) => void) => () => void
 }
 
 declare global {

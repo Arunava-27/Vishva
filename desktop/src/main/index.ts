@@ -6,7 +6,10 @@ import path from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron'
 import { getKnownAuthState, setKnownAuthState } from './authState.ts'
 import { sendMessage } from './chat.ts'
+import { runCooperative, type CooperativeEvent } from './cooperative.ts'
+import { CooperativeSession, type CooperativeSessionData, type CooperativeTurn } from './cooperativeSession.ts'
 import { clearCooldown, getCooldownInfo } from './cooldown.ts'
+import { checkRepoEligibility, sweepOrphanedWorktrees, type RepoEligibility } from './gitWorktree.ts'
 import { activeMcpServers, addMcpServer, listMcpServers, removeMcpServer, updateMcpServer, type McpServerConfig } from './mcpServers.ts'
 import { checkLiveAuthStatus, isInstalled, PROVIDERS, runProvider, type Provider } from './providers.ts'
 import { Project, type ProjectData } from './project.ts'
@@ -34,6 +37,17 @@ interface RunningTask {
 // so the close handler has one thing to check; SetupPanel itself stays
 // single-instance, no real setup-concurrency is being introduced.
 const runningTasks = new Map<string, RunningTask>()
+
+interface CooperativeRunningTask {
+  sessionId: string
+  // keyed by provider name, or the reserved key '__judge__' for the judge
+  // phase's own process - a cooperative turn spawns N+1 processes at once,
+  // unlike a regular RunningTask's single `proc`.
+  procs: Map<string, ChildProc>
+  cancelled: boolean
+  startedAt: number
+}
+const cooperativeRunningTasks = new Map<string, CooperativeRunningTask>()
 
 // Only one install/login can be visible at a time (SetupPanel is a single
 // instance), so cancelling "the current one" just needs this one pointer.
@@ -66,9 +80,10 @@ function createWindow(): void {
   // process tree (not just the top-level one) via taskkill /T on Windows -
   // matches the guarantee already proven out in the Python prototype.
   mainWindow.on('close', (event) => {
-    if (runningTasks.size === 0) return
+    const total = runningTasks.size + cooperativeRunningTasks.size
+    if (total === 0) return
     event.preventDefault()
-    const what = runningTasks.size === 1 ? 'A task is still running' : `${runningTasks.size} tasks are still running`
+    const what = total === 1 ? 'A task is still running' : `${total} tasks are still running`
     const choice = dialog.showMessageBoxSync(mainWindow!, {
       type: 'question',
       buttons: ['Cancel', 'Stop and close'],
@@ -85,6 +100,11 @@ function createWindow(): void {
         killTree(task.proc)
       }
       runningTasks.clear()
+      for (const task of cooperativeRunningTasks.values()) {
+        task.cancelled = true
+        for (const proc of task.procs.values()) killTree(proc)
+      }
+      cooperativeRunningTasks.clear()
       mainWindow?.destroy()
     }
   })
@@ -119,6 +139,10 @@ app.whenReady().then(() => {
     () => Skill.listAll().map((s) => s.data),
     projectCwd,
   )
+  // crash backstop: force-remove any worktree left behind by a previous run
+  // that never got to finish its own cleanup (killed mid-turn, machine died, etc).
+  const ownerCwds = new Map(CooperativeSession.listAll().map((s) => [s.data.id, s.data.cwd]))
+  sweepOrphanedWorktrees(ownerCwds).catch((err) => console.error('[cooperative] orphan worktree sweep failed:', err))
 })
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
@@ -473,4 +497,107 @@ ipcMain.handle('chat:cancel', (_e: IpcMainInvokeEvent, taskId: string) => {
   if (!task) return
   task.cancelled = true
   killTree(task.proc)
+})
+
+// -- Cooperative mode --------------------------------------------------------
+
+ipcMain.handle('cooperative:checkRepo', (_e: IpcMainInvokeEvent, cwd: string): Promise<RepoEligibility> => {
+  return checkRepoEligibility(cwd)
+})
+
+ipcMain.handle('cooperative:listSessions', (): CooperativeSessionData[] => {
+  return CooperativeSession.listAll().map((s) => s.data)
+})
+
+ipcMain.handle('cooperative:openSession', (_e: IpcMainInvokeEvent, id: string): CooperativeSessionData => {
+  return CooperativeSession.load(id).data
+})
+
+ipcMain.handle('cooperative:deleteSession', (_e: IpcMainInvokeEvent, id: string): void => {
+  CooperativeSession.delete(id)
+})
+
+ipcMain.handle('cooperative:renameSession', (_e: IpcMainInvokeEvent, id: string, task: string): CooperativeSessionData => {
+  return CooperativeSession.rename(id, task)
+})
+
+ipcMain.handle(
+  'cooperative:send',
+  async (
+    event: IpcMainInvokeEvent,
+    args: {
+      taskId: string
+      sessionId: string
+      sessionData: CooperativeSessionData | null
+      task: string
+      cwd: string
+      projectId: string | null
+      providers: string[]
+      judgeProvider: string
+      text: string
+      attachments: string[]
+    },
+  ): Promise<{ session: CooperativeSessionData }> => {
+    const session = args.sessionData
+      ? new CooperativeSession(args.sessionData)
+      : CooperativeSession.create(args.task, args.cwd, args.projectId, args.providers, args.judgeProvider, args.sessionId)
+
+    const runningTask: CooperativeRunningTask = { sessionId: session.data.id, procs: new Map(), cancelled: false, startedAt: Date.now() }
+    cooperativeRunningTasks.set(args.taskId, runningTask)
+
+    // same best-effort/first-turn-only convention as chat:send - see its
+    // identical comment above.
+    let finalText = args.text
+    if (session.data.turns.length === 0) {
+      try {
+        const instructions = session.data.projectId ? Project.load(session.data.projectId).data.instructions : ''
+        if (instructions) finalText = `${instructions}\n\n---\n\n${finalText}`
+      } catch {
+        // project no longer exists - fine
+      }
+    }
+
+    // an existing session otherwise keeps whatever cwd it was created with
+    // forever - re-sync from the project each turn, same as chat:send.
+    if (session.data.projectId) {
+      const liveCwd = projectCwd(session.data.projectId)
+      if (liveCwd && liveCwd !== session.data.cwd) session.data.cwd = liveCwd
+    }
+
+    const result = await runCooperative(session.data.cwd, session.data.id, finalText, args.providers, args.judgeProvider, {
+      attachments: args.attachments,
+      onEvent: (e: CooperativeEvent) => event.sender.send('cooperative:event', { ...e, taskId: args.taskId }),
+      onProcess: (provider, proc) => {
+        runningTask.procs.set(provider, proc)
+      },
+      isCancelled: () => runningTask.cancelled,
+      mcpServers: activeMcpServers(session.data.projectId),
+    })
+
+    cooperativeRunningTasks.delete(args.taskId)
+
+    const turn: CooperativeTurn = {
+      prompt: args.text,
+      timestamp: new Date().toISOString(),
+      providerResults: result.providerResults,
+      judge: result.judge,
+      judgeError: result.judgeError,
+    }
+    session.addTurn(turn)
+
+    // same opportunistic ground-truth update as chat:send.
+    for (const r of result.providerResults) {
+      if (r.status === 'SUCCESS') setKnownAuthState(r.provider, true)
+      else if (r.status === 'AUTH_FAILURE') setKnownAuthState(r.provider, false)
+    }
+
+    return { session: session.data }
+  },
+)
+
+ipcMain.handle('cooperative:cancel', (_e: IpcMainInvokeEvent, taskId: string) => {
+  const task = cooperativeRunningTasks.get(taskId)
+  if (!task) return
+  task.cancelled = true
+  for (const proc of task.procs.values()) killTree(proc)
 })

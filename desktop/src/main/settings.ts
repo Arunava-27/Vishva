@@ -10,12 +10,16 @@ export interface Settings {
   theme: 'system' | 'light' | 'dark'
   defaultProvider: string
   defaultFallbackOrder: string[]
+  /** Cooperative mode's default judge - the provider that synthesizes the
+   * final answer from every other provider's isolated attempt. */
+  defaultJudgeProvider: string
 }
 
 const DEFAULTS: Settings = {
   theme: 'system',
   defaultProvider: 'claude',
   defaultFallbackOrder: ['claude', 'codex', 'copilot', 'antigravity'],
+  defaultJudgeProvider: 'claude',
 }
 
 let file = path.join(os.homedir(), '.aicli', 'settings.json')

@@ -22,6 +22,23 @@ interface ChatEvent {
   }
 }
 
+interface CooperativeEvent {
+  kind:
+    | 'attempt' | 'skip' | 'failure' | 'handoff' | 'success' | 'cancelled' | 'exhausted' | 'tool' | 'usage'
+    | 'worktree-setup' | 'worktree-error' | 'judge-start' | 'judge-success' | 'judge-failure'
+  provider: string | null
+  message: string
+  detail?: string
+  timestamp: string
+  taskId: string
+  toolId?: string
+  toolName?: string
+  toolInput?: unknown
+  toolResult?: unknown
+  toolDiff?: { added: number; removed: number }
+  usage?: ChatEvent['usage']
+}
+
 const api = {
   // File.path was removed from the renderer (Electron 32+); webUtils is the
   // replacement, and it's only reachable from preload - hence this bridge
@@ -81,6 +98,29 @@ const api = {
   addMcpServer: (input: Record<string, unknown>) => ipcRenderer.invoke('mcp:add', input),
   updateMcpServer: (id: string, patch: Record<string, unknown>) => ipcRenderer.invoke('mcp:update', id, patch),
   removeMcpServer: (id: string) => ipcRenderer.invoke('mcp:remove', id),
+  checkCooperativeRepo: (cwd: string) => ipcRenderer.invoke('cooperative:checkRepo', cwd),
+  listCooperativeSessions: () => ipcRenderer.invoke('cooperative:listSessions'),
+  openCooperativeSession: (id: string) => ipcRenderer.invoke('cooperative:openSession', id),
+  deleteCooperativeSession: (id: string) => ipcRenderer.invoke('cooperative:deleteSession', id),
+  renameCooperativeSession: (id: string, task: string) => ipcRenderer.invoke('cooperative:renameSession', id, task),
+  sendCooperative: (args: {
+    taskId: string
+    sessionId: string
+    sessionData: unknown | null
+    task: string
+    cwd: string
+    projectId: string | null
+    providers: string[]
+    judgeProvider: string
+    text: string
+    attachments: string[]
+  }) => ipcRenderer.invoke('cooperative:send', args),
+  cancelCooperative: (taskId: string) => ipcRenderer.invoke('cooperative:cancel', taskId),
+  onCooperativeEvent: (callback: (event: CooperativeEvent) => void) => {
+    const listener = (_event: unknown, coopEvent: CooperativeEvent) => callback(coopEvent)
+    ipcRenderer.on('cooperative:event', listener)
+    return () => ipcRenderer.removeListener('cooperative:event', listener)
+  },
 }
 
 export type AicliApi = typeof api

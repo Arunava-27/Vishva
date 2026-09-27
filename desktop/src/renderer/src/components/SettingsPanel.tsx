@@ -46,6 +46,17 @@ export default function SettingsPanel({ settings, providerNames, onChange, onClo
           />
         </div>
 
+        <label className="settings-row">
+          Default judge (Cooperative mode)
+          <select value={settings.defaultJudgeProvider} onChange={(e) => onChange({ defaultJudgeProvider: e.target.value })}>
+            {providerNames.map((name) => (
+              <option key={name} value={name}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+
         <div className="setup-actions">
           <button onClick={onClose}>Close</button>
         </div>

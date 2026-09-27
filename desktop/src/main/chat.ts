@@ -42,8 +42,10 @@ function makeEvent(kind: ChatEventKind, provider: string | null, message: string
 
 /** Normalizes a mid-flight ProviderStreamEvent (providers.ts's per-CLI
  * schema translation) into the ChatEvent vocabulary the renderer speaks -
- * keeps providers.ts ignorant of ChatEvent's shape. */
-function streamEventToChatEvent(provider: string, evt: ProviderToolOrUsageEvent): ChatEvent {
+ * keeps providers.ts ignorant of ChatEvent's shape. Exported for reuse by
+ * cooperative.ts, which needs the identical per-provider translation for its
+ * parallel fan-out. */
+export function streamEventToChatEvent(provider: string, evt: ProviderToolOrUsageEvent): ChatEvent {
   const timestamp = new Date().toISOString()
   if (evt.type === 'tool') {
     return {
@@ -69,8 +71,8 @@ function streamEventToChatEvent(provider: string, evt: ProviderToolOrUsageEvent)
  * safe because none of the confirmed per-step numbers are running cumulative
  * totals (claude emits one per tool-loop step, the others emit one final
  * one). `diff` is copilot's already-final aggregate, not additive - the
- * latest one wins rather than summing. */
-function mergeUsage(acc: UsageSummary | undefined, u: UsageSummary | undefined): UsageSummary | undefined {
+ * latest one wins rather than summing. Exported for reuse by cooperative.ts. */
+export function mergeUsage(acc: UsageSummary | undefined, u: UsageSummary | undefined): UsageSummary | undefined {
   if (!u) return acc
   const other = { ...acc?.other }
   if (u.other) for (const [k, v] of Object.entries(u.other)) other[k] = (other[k] ?? 0) + v
