@@ -1,0 +1,21 @@
+# One endpoint, model aliases. Clients change only the alias.
+model_list:
+  - model_name: smart            # large general model on the DGX
+    litellm_params:
+      model: openai/smart
+      api_base: http://vllm:8000/v1
+      api_key: none
+
+  - model_name: fast             # small model on the Mac, run natively: mlx_lm.server --port 8080
+    litellm_params:
+      model: openai/fast
+      api_base: os.environ/MAC_API_BASE
+      api_key: none
+
+router_settings:
+  fallbacks:
+    - smart: [fast]              # add a cloud alias here if allowed
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL

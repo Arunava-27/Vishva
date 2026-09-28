@@ -1,0 +1,120 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Idea-as-a-Service: Low-Budget POC Plan</title>
+<style>
+@page{size:A4;margin:16mm 15mm}
+*{box-sizing:border-box}
+body{font-family:'Segoe UI',Helvetica,Arial,sans-serif;font-size:10.3pt;line-height:1.45;color:#1e293b;margin:0}
+h1{font-size:25pt;margin:0 0 4pt;color:#0f172a;line-height:1.15}
+h2{font-size:14.5pt;color:#1e3a8a;border-bottom:2px solid #bfdbfe;padding-bottom:3pt;margin:18pt 0 8pt;break-after:avoid}
+h3{font-size:11.5pt;color:#334155;margin:12pt 0 4pt;break-after:avoid}
+p{margin:0 0 7pt}ul,ol{margin:0 0 8pt;padding-left:16pt}li{margin-bottom:2.5pt}
+table{border-collapse:collapse;width:100%;margin:6pt 0 10pt;font-size:8.8pt}
+tr{break-inside:avoid}
+th{background:#1e3a8a;color:#fff;text-align:left;padding:4pt 6pt}
+td{border-bottom:1px solid #e2e8f0;padding:3.5pt 6pt;vertical-align:top}
+tbody tr:nth-child(even){background:#f8fafc}
+.tag{display:inline-block;background:#dbeafe;color:#1e40af;border-radius:4pt;padding:1pt 6pt;font-size:8.5pt;margin-right:4pt}
+.box{border-left:4px solid #2563eb;background:#eff6ff;padding:7pt 10pt;margin:8pt 0;border-radius:0 6pt 6pt 0}
+code{background:#f1f5f9;padding:0 3pt;border-radius:3pt;font-size:9pt}
+pre{background:#0f172a;color:#e2e8f0;padding:8pt 10pt;border-radius:6pt;font-size:8.6pt;line-height:1.35;white-space:pre-wrap;break-inside:avoid}
+.small{font-size:8.5pt;color:#64748b}
+.sub{font-size:12pt;color:#475569;margin-bottom:10pt}
+</style></head><body>
+
+<span class="tag">POC plan</span><span class="tag">Low budget</span><span class="tag">Companion to the platform blueprint</span>
+<h1>Idea-as-a-Service: Low-Budget POC Plan</h1>
+<div class="sub">How to prove the core loop (idea to working, tested, deployed app) for $0 to about $900 instead of $300k+, and what to cut until it is proven.</div>
+
+<div class="box"><b>Assumption.</b> "IaaS" here means <b>Idea-as-a-Service</b> from your blueprint. It does not mean Infrastructure-as-a-Service. If you meant the latter, this plan needs to be redone.</div>
+
+<h2>1. What the POC must prove (and nothing else)</h2>
+<p>The full blueprint is a factory for ERP, web, mobile, IoT, network and cyber products. A POC should not build a factory. It should answer <b>one question</b> with evidence:</p>
+<div class="box"><b>Can an AI pipeline, with a human approving three checkpoints, turn a one-page idea into a working, tested web app on a staging URL, at a cost and effort a small team could afford?</b></div>
+<p>The narrow loop:</p>
+<pre>Idea (1 page) -> PRD + typed contracts (schema-validated) -> tests first -> code in sandbox
+   -> verify (syntax, tests, lint, security scan) -> auto-repair (max 3 loops) -> staging URL
+   Human gates: (1) approve PRD  (2) approve contracts  (3) approve staging build</pre>
+<h3>In scope</h3>
+<ul><li>One stack (recommended: FastAPI or Node + Postgres/SQLite + a simple React or server-rendered UI) and one demo domain (for example equipment rental or a small-business CRM).</li>
+<li>A schema gate: every AI output that later steps depend on is validated against a typed schema before use.</li>
+<li>A sandboxed build-and-test step and a bounded repair loop.</li>
+<li>Cost and token tracking per project.</li></ul>
+<h3>Explicitly out of scope</h3>
+<ul><li>Mobile, IoT, network and cyber squads; compliance logic; multi-tenant billing; custom domains; maintenance automation; Kubernetes, Temporal, Firecracker, dedicated GPUs.</li></ul>
+
+<h2>2. Where the blueprint is cut down</h2>
+<table><thead><tr><th>Blueprint layer</th><th>POC substitute</th><th>Cost</th><th>Revisit when</th></tr></thead><tbody>
+<tr><td>8-GPU inference node</td><td>Hosted API for open-weight coder models behind <b>one router function</b> (OpenRouter / DeepSeek / Gemini Flash), or local Ollama (<code>qwen2.5-coder</code> 7B-14B) for $0. A frontier model only for planning and escalations.</td><td>$0 to a few $ per project</td><td>API spend passes about $500/mo, or privacy demands local</td></tr>
+<tr><td>Temporal + Kubernetes control plane</td><td>Plain Python or Node state machine, state persisted in SQLite/Postgres (Docker Compose)</td><td>$0</td><td>Runs must survive restarts or run in parallel</td></tr>
+<tr><td>Firecracker / gVisor sandbox</td><td>Rootless Docker, no network by default, CPU/memory/time limits (or a child process with a timeout for the first spike)</td><td>$0</td><td>You run untrusted third-party code</td></tr>
+<tr><td>Type-safe decoding (grammar-constrained)</td><td>JSON Schema / Zod / Pydantic validation plus re-ask on failure; provider JSON mode where available</td><td>$0</td><td>Retry rate is high enough to cost real money</td></tr>
+<tr><td>Full SAST/DAST suites</td><td>Language syntax check, unit/integration tests, Semgrep + Gitleaks + Trivy (all free)</td><td>$0</td><td>Before any real customer data</td></tr>
+<tr><td>GitLab + CI farm + HA observability</td><td>Forgejo or GitHub free; Langfuse as a single container, or a CSV log of tokens and cost</td><td>$0</td><td>More than about 5 users</td></tr>
+<tr><td>Multi-region staging</td><td>Local live preview; then one small VPS or a free tier (Cloudflare, Vercel, Fly.io)</td><td>$0 to $10/mo</td><td>Real users</td></tr>
+<tr><td>5-FTE platform team</td><td>You, plus optionally one part-time helper. Your time is the real cost.</td><td>Your time</td><td>POC passes the gate</td></tr>
+</tbody></table>
+
+<h2>3. Design choices that keep it cheap</h2>
+<ul>
+<li><b>Template first, code second.</b> Start with one hand-built, known-good app template (auth, CRUD, dashboard). Let the AI produce a <i>validated specification and configuration</i> plus targeted code for the parts that differ. This cuts tokens, failure rate and review effort sharply. Move to freer code generation only after the template path works.</li>
+<li><b>One deployed app can host many configuration-driven "generated" apps</b> (routes like <code>/apps/&lt;slug&gt;</code>). This avoids per-app infrastructure in the demo. It is a demo shortcut, not the final architecture.</li>
+<li><b>Tests before code.</b> Ask for tests from the contracts first. A failing test is a cheap, objective signal for the repair loop and for measuring quality.</li>
+<li><b>Bounded loops.</b> Max 3 repair attempts and a token budget per stage. When exceeded, stop and hand over to a human. Uncapped agents are the main way a low-budget POC turns into a high bill.</li>
+<li><b>Model router.</b> Every LLM call goes through one function that takes a role (<code>plan</code>, <code>code</code>, <code>repair</code>, <code>review</code>). Swap models per role without touching the pipeline.</li>
+</ul>
+
+<h2>4. Budget options (8 weeks, including about 20% contingency)</h2>
+<table><thead><tr><th>Option</th><th>Total</th><th>What you get</th><th>Best for</th></tr></thead><tbody>
+<tr><td><b>Tier 0: Local-only</b></td><td>about $0 to $30</td><td>Ollama on your existing machine (7B-14B coder model), SQLite, local Docker, local preview. Slower and lower quality, but proves the pipeline mechanics.</td><td>Weeks 1-2 spike, offline demos</td></tr>
+<tr><td><b>Tier 1: Lean</b> (recommended start)</td><td>about $220</td><td>Hosted open-weight model APIs (about $80-120), a small VPS for staging and Forgejo (about $10-20/mo), optional domain, contingency. No frontier API, no GPU rental.</td><td>Weeks 1-6</td></tr>
+<tr><td><b>Tier 2: Standard</b></td><td>about $875</td><td>Lean plus frontier-model planning and escalation (about $300-400) and about $150 of rented-GPU benchmarking to test self-hosting economics.</td><td>Weeks 7-8, only if the gate passes</td></tr>
+<tr><td><b>Tier 3: Stretch</b></td><td>about $2,500</td><td>Standard plus a 3-day rental of an 8-GPU node to test the blueprint's target serving stack under real load.</td><td>Only for investor or partner evidence</td></tr>
+</tbody></table>
+<p class="small">All prices and token costs are planning estimates for 2026, not quotes. Week 3 measures real cost per project; use those numbers, not these, for any commitment. Compare with the blueprint's Tier A pilot capex of $20-45k plus operating costs: the POC defers all of it until the loop is proven. An itemised breakdown is in <code>POC_Budget.csv</code>.</p>
+
+<h2>5. Eight-week build plan</h2>
+<table><thead><tr><th>Week</th><th>Goal</th><th>Deliverable / exit check</th></tr></thead><tbody>
+<tr><td>1</td><td>Pick stack and demo domain; write 3 test ideas of increasing difficulty; set up repo, Docker Compose, and a model router with 2 providers.</td><td>"Hello pipeline": a stub run goes through every stage and logs cost.</td></tr>
+<tr><td>2</td><td>Idea to PRD to typed contracts (entities, endpoints, acceptance criteria) with schema validation and re-ask.</td><td>3 ideas produce valid contracts; invalid output is caught every time.</td></tr>
+<tr><td>3</td><td>Tests-first code generation on the template; sandbox runner. <b>Measure real token cost.</b></td><td>One idea yields passing tests locally; cost per run recorded.</td></tr>
+<tr><td>4</td><td>Repair loop (max 3), static checks (Semgrep, Gitleaks), failure taxonomy.</td><td>Repair loop fixes a majority of first-run failures.</td></tr>
+<tr><td>5</td><td>Human gates (approve PRD, contracts, build), staging deploy, minimal web UI or CLI for the whole flow.</td><td>End-to-end run to a public or LAN staging URL.</td></tr>
+<tr><td>6</td><td>Run all 3 ideas 3 times each; collect metrics. <b>Go / no-go gate.</b></td><td>Metrics table (section 6) and a written decision.</td></tr>
+<tr><td>7-8</td><td>If go: add a second stack or domain, frontier planning, GPU cost benchmark, demo video, pitch. If no-go: write up why and what to change.</td><td>Demo, cost model, next-phase plan.</td></tr>
+</tbody></table>
+
+<h2>6. Week-6 gate: pass / kill thresholds</h2>
+<table><thead><tr><th>Metric</th><th>Pass</th><th>Kill or rethink</th></tr></thead><tbody>
+<tr><td>Ideas reaching a working staging app (of 3)</td><td>2 or more</td><td>0 or 1</td></tr>
+<tr><td>Generated tests that pass (after repair)</td><td>85% or more</td><td>below 60%</td></tr>
+<tr><td>Extra human interventions per project (beyond the 3 gates)</td><td>fewer than 5</td><td>10 or more</td></tr>
+<tr><td>Cost per project (tokens plus compute)</td><td>under $100</td><td>over $250</td></tr>
+<tr><td>Time from idea to staging</td><td>under 4 hours</td><td>more than 2 days</td></tr>
+<tr><td>Schema-invalid output reaching later stages</td><td>0</td><td>any</td></tr>
+</tbody></table>
+<p>Between pass and kill: keep going two more weeks on Lean only, fix the top failure category, and re-measure.</p>
+
+<h2>7. Risks</h2>
+<table><thead><tr><th>Risk</th><th>Mitigation</th></tr></thead><tbody>
+<tr><td>Scope creep back to the full blueprint</td><td>The out-of-scope list in section 1 is binding until the gate passes.</td></tr>
+<tr><td>Small local models produce poor code</td><td>Template-first, tests-first, hosted open-weight or frontier fallback for hard steps.</td></tr>
+<tr><td>Runaway token spend</td><td>Per-stage budgets, max repair loops, a hard monthly cap and daily spend alert on the API key.</td></tr>
+<tr><td>Running generated code unsafely</td><td>Rootless Docker, no network, resource limits, never mount host secrets.</td></tr>
+<tr><td>Demo works only on the happy path</td><td>3 ideas of different difficulty, 3 runs each, report failures honestly.</td></tr>
+<tr><td>"It works" without a business case</td><td>Interview 5 target users before week 5; record what they would pay for.</td></tr>
+<tr><td>Price assumptions are stale</td><td>Re-check provider pricing at week 1 and week 3.</td></tr>
+</tbody></table>
+
+<h2>8. This week's to-do list</h2>
+<ol>
+<li>Choose the stack and the demo domain; write the three test ideas (easy, medium, hard).</li>
+<li>Install Docker and Ollama with one coder model; create one hosted-model API account with a hard monthly spend cap.</li>
+<li>Create the repo and Compose file; write the model router with two providers.</li>
+<li>Write the "project spec" schema (entities, fields, endpoints, acceptance criteria) and a validator.</li>
+<li>Build one hand-made template app and its test suite; this is the target the AI fills in.</li>
+<li>Get one stub run through all stages, logging tokens and cost.</li>
+</ol>
+
+<h2>9. After the POC</h2>
+<p>If the gate passes, follow the blueprint's roadmap in order: Tier A pilot infrastructure, Temporal for durable runs, Firecracker/gVisor for isolation, a second squad (for example ERP), and only then mobile, IoT, network and cyber. If it fails, the failure data tells you whether the problem is model quality, spec quality or verification, and each has a different fix.</p>
+<p class="small">Companion files: <code>POC_Budget.csv</code> (itemised costs by tier), <code>Idea-as-a-Service-Plan.pdf</code> (full platform blueprint).</p>
+</body></html>

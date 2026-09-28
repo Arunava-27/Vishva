@@ -1,0 +1,53 @@
+# Runs on the DGX Spark. Phase 1-2 starter: vLLM + LiteLLM + Postgres.
+# Image tags and model names are placeholders: verify against NVIDIA's DGX Spark playbooks (arm64/CUDA).
+services:
+  vllm:
+    image: nvcr.io/nvidia/vllm:latest        # pin a tested tag
+    runtime: nvidia
+    ipc: host
+    environment:
+      HF_TOKEN: ${HF_TOKEN}
+    volumes:
+      - hf-cache:/root/.cache/huggingface
+    command: >
+      vllm serve Qwen/Qwen2.5-32B-Instruct
+      --served-model-name smart
+      --max-model-len 32768
+      --gpu-memory-utilization 0.6
+      --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 20
+      start_period: 300s
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: litellm
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/litellm
+      MAC_API_BASE: ${MAC_API_BASE}
+    volumes:
+      - ./litellm-config.yaml:/app/config.yaml:ro
+    ports:
+      - "4000:4000"        # reach it over Tailscale only; never port-forward
+    depends_on:
+      - vllm
+      - postgres
+    restart: unless-stopped
+
+volumes:
+  hf-cache:
+  pg-data:
